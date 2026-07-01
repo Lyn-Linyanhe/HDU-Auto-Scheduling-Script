@@ -2,6 +2,7 @@
   const STORAGE_KEY = 'hdu-scheduler-state-v3';
   const COURSE_API = '/api/course';
   const STATUS_API = '/api/status';
+  const PERSONAL_SCHEDULE_API = '/api/personal-schedule';
   const DAY_LABELS = ['周一', '周二', '周三', '周四', '周五'];
   const PERIOD_TIMES = [
     '08:05-08:50',
@@ -540,6 +541,7 @@
     PERIOD_TIMES,
     COURSE_API,
     STATUS_API,
+    PERSONAL_SCHEDULE_API,
     loadState,
     saveState,
     fetchJSON,

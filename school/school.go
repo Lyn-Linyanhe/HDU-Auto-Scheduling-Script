@@ -11,16 +11,21 @@ import (
 )
 
 type StatusResponse struct {
-	Ready      bool   `json:"ready"`
-	Phase      string `json:"phase"`
-	Step       string `json:"step,omitempty"`
-	Message    string `json:"message,omitempty"`
-	Error      string `json:"error,omitempty"`
-	Count      int    `json:"count,omitempty"`
-	CourseName string `json:"courseName,omitempty"`
-	FileName   string `json:"fileName,omitempty"`
-	OutputPath string `json:"outputPath,omitempty"`
-	UpdatedAt  string `json:"updatedAt,omitempty"`
+	Ready               bool   `json:"ready"`
+	Phase               string `json:"phase"`
+	Step                string `json:"step,omitempty"`
+	Message             string `json:"message,omitempty"`
+	Error               string `json:"error,omitempty"`
+	Count               int    `json:"count,omitempty"`
+	CourseName          string `json:"courseName,omitempty"`
+	FileName            string `json:"fileName,omitempty"`
+	OutputPath          string `json:"outputPath,omitempty"`
+	PersonalCount       int    `json:"personalCount,omitempty"`
+	PersonalFileName    string `json:"personalFileName,omitempty"`
+	PersonalOutputPath  string `json:"personalOutputPath,omitempty"`
+	PersonalExported    bool   `json:"personalExported,omitempty"`
+	PersonalExportError string `json:"personalExportError,omitempty"`
+	UpdatedAt           string `json:"updatedAt,omitempty"`
 }
 
 type ExportRequest struct {
@@ -88,6 +93,11 @@ func (s *Service) setStatus(phase, step, message string, ready bool, result *Exp
 		status.CourseName = result.CourseName
 		status.FileName = result.FileName
 		status.OutputPath = result.OutputPath
+		status.PersonalCount = result.PersonalCount
+		status.PersonalFileName = result.PersonalFileName
+		status.PersonalOutputPath = result.PersonalOutputPath
+		status.PersonalExported = result.PersonalExported
+		status.PersonalExportError = result.PersonalExportError
 	}
 	s.status = status
 }

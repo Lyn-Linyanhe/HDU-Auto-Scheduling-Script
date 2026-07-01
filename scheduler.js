@@ -196,6 +196,30 @@
     setSelectionMap(map);
   }
 
+  async function autoImportPersonalSchedule() {
+    if ((state.baseCourseIds || []).length || state.personalScheduleAutoImported) return;
+    let data;
+    try {
+      data = await HDU.fetchJSON(HDU.PERSONAL_SCHEDULE_API);
+    } catch {
+      return;
+    }
+    const list = Array.isArray(data?.items) ? data.items : Array.isArray(data) ? data : [];
+    if (!list.length) return;
+    const matched = list.map(matchImportedCourse).filter(Boolean);
+    if (!matched.length) {
+      state.personalScheduleAutoImported = true;
+      state.baseScheduleName = '个人课表未匹配';
+      persistState();
+      renderBaseSummary();
+      return;
+    }
+    state.baseCourseIds = [...new Set(matched.map((item) => item.id))];
+    state.baseScheduleName = '个人课表';
+    state.personalScheduleAutoImported = true;
+    addManySections(matched, 'base');
+  }
+
   function removeGroup(groupId) {
     const map = getSelectionMap();
     delete map[groupId];
@@ -1207,6 +1231,7 @@
     state.selectedGroups = map;
     state.baseCourseIds = [];
     state.baseScheduleName = '';
+    state.personalScheduleAutoImported = false;
     clearCandidateState();
     persistState();
     rebuildSelection();
@@ -1344,6 +1369,7 @@
   async function loadCourses() {
     const data = await HDU.fetchJSON(HDU.COURSE_API);
     courses = HDU.normalizeCourseData(data);
+    await autoImportPersonalSchedule();
     rebuildSelection();
     restoreCandidates();
     els.subtitle.textContent = `当前加载 ${courses.length} 个教学班，${HDU.groupCourses(courses).length} 个课组`;

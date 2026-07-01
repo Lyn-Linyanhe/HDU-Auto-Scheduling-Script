@@ -27,6 +27,7 @@ func main() {
 	mux.HandleFunc("/", serveStatic)
 	mux.HandleFunc("/api/status", handleStatus)
 	mux.HandleFunc("/api/course", handleCourse)
+	mux.HandleFunc("/api/personal-schedule", handlePersonalSchedule)
 	mux.HandleFunc("/api/bootstrap/import", handleImport)
 
 	if os.Getenv("HDU_NO_BROWSER") != "1" {
@@ -119,6 +120,24 @@ func handleCourse(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	_, _ = w.Write(data)
+}
+
+func handlePersonalSchedule(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	data, err := os.ReadFile("personal-schedule.json")
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusNotFound)
+		return
+	}
+	payload, err := school.DecodeCoursePayload(data)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusNotFound)
+		return
+	}
+	writeJSON(w, map[string]any{"items": payload.Items})
 }
 
 func handleImport(w http.ResponseWriter, r *http.Request) {

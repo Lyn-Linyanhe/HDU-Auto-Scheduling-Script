@@ -9,6 +9,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"math/big"
 	"net/http"
@@ -23,13 +24,19 @@ import (
 )
 
 const courseURL = "https://newjw.hdu.edu.cn/jwglxt/rwlscx/rwlscx_cxRwlsIndex.html?doType=query&gnmkdm=N1548"
+const personalScheduleURL = "https://newjw.hdu.edu.cn/jwglxt/kbcx/xskbcx_cxXsgrkb.html?gnmkdm=N2151"
 const userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36 Edg/143.0.0.0"
 
 type ExportResult struct {
-	Count      int    `json:"count"`
-	CourseName string `json:"courseName"`
-	FileName   string `json:"fileName"`
-	OutputPath string `json:"outputPath"`
+	Count               int    `json:"count"`
+	CourseName          string `json:"courseName"`
+	FileName            string `json:"fileName"`
+	OutputPath          string `json:"outputPath"`
+	PersonalCount       int    `json:"personalCount"`
+	PersonalFileName    string `json:"personalFileName,omitempty"`
+	PersonalOutputPath  string `json:"personalOutputPath,omitempty"`
+	PersonalExported    bool   `json:"personalExported"`
+	PersonalExportError string `json:"personalExportError,omitempty"`
 }
 
 type exporter struct {
@@ -39,6 +46,12 @@ type exporter struct {
 type publicKeyPayload struct {
 	Modulus  string `json:"modulus"`
 	Exponent string `json:"exponent"`
+}
+
+type termParams struct {
+	XueNian string
+	XueQi   string
+	Xqm     string
 }
 
 func newExporter() *exporter {
@@ -239,7 +252,8 @@ func (e *exporter) getPublicKey() (string, error) {
 }
 
 func (e *exporter) warmupNewJW() error {
-	resp, err := e.client.Get("https://newjw.hdu.edu.cn/jwglxt/kbcx/xskbcx_cxXsgrkb.html?gnmkdm=N2151&xnm=2022&xqm=3")
+	params := termFromRequest(ExportRequest{})
+	resp, err := e.client.Get(personalScheduleURL + "&xnm=" + url.QueryEscape(params.XueNian) + "&xqm=" + url.QueryEscape(params.Xqm))
 	if err != nil {
 		return err
 	}
@@ -349,24 +363,12 @@ func containsAny(text string, values ...string) bool {
 }
 
 func (e *exporter) exportCourse(req ExportRequest) (*ExportResult, error) {
-	xueNian := strings.TrimSpace(req.XueNian)
-	if xueNian == "" {
-		xueNian = "2025"
-	}
-	xueQi := strings.TrimSpace(req.XueQi)
-	if xueQi == "" {
-		xueQi = "2"
-	}
-	xqm := "12"
-	if xueQi == "1" {
-		xqm = "3"
-	}
-
+	params := termFromRequest(req)
 	form := url.Values{}
-	form.Set("xnmc", xueNian+"-"+strconv.Itoa(mustAtoi(xueNian)+1))
-	form.Set("xqmc", xueQi)
-	form.Set("xnm", xueNian)
-	form.Set("xqm", xqm)
+	form.Set("xnmc", params.XueNian+"-"+strconv.Itoa(mustAtoi(params.XueNian)+1))
+	form.Set("xqmc", params.XueQi)
+	form.Set("xnm", params.XueNian)
+	form.Set("xqm", params.Xqm)
 	form.Set("_search", "false")
 	form.Set("nd", strconv.FormatInt(time.Now().Unix(), 10))
 	form.Set("queryModel.showCount", "9999")
@@ -411,7 +413,12 @@ func (e *exporter) exportCourse(req ExportRequest) (*ExportResult, error) {
 		return nil, errors.New("没有拿到课程数据，请确认学年学期是否正确")
 	}
 
-	raw := map[string]any{"items": payload.Items}
+	raw := map[string]any{
+		"items":   payload.Items,
+		"term":    params.XueNian + "-" + strconv.Itoa(mustAtoi(params.XueNian)+1) + "-" + params.XueQi,
+		"source":  "task-course",
+		"version": 1,
+	}
 	textBytes, _ := json.MarshalIndent(raw, "", "  ")
 	if err := os.WriteFile("course.json", textBytes, 0644); err != nil {
 		return nil, err
@@ -424,6 +431,166 @@ func (e *exporter) exportCourse(req ExportRequest) (*ExportResult, error) {
 		FileName:   "course.json",
 		OutputPath: outputPath,
 	}, nil
+}
+
+func (e *exporter) exportPersonalSchedule(req ExportRequest) (*ExportResult, error) {
+	params := termFromRequest(req)
+	apiURL := personalScheduleURL + "&xnm=" + url.QueryEscape(params.XueNian) + "&xqm=" + url.QueryEscape(params.Xqm)
+	resp, err := e.client.Get(apiURL)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	text := string(body)
+	if strings.Contains(text, "统一身份认证") {
+		return nil, errors.New("个人课表接口提示登录已失效")
+	}
+	if strings.Contains(text, "无功能权限") {
+		return nil, errors.New("当前账号没有个人课表查询权限")
+	}
+
+	var raw map[string]any
+	if err := json.Unmarshal(body, &raw); err != nil {
+		return nil, errors.New("个人课表接口返回内容不是可解析的 JSON")
+	}
+	items := extractPersonalScheduleItems(raw)
+	payload := map[string]any{
+		"source":     "personal-schedule",
+		"term":       params.XueNian + "-" + strconv.Itoa(mustAtoi(params.XueNian)+1) + "-" + params.XueQi,
+		"exportedAt": time.Now().Format(time.RFC3339),
+		"items":      items,
+		"raw":        raw,
+	}
+	textBytes, _ := json.MarshalIndent(payload, "", "  ")
+	if err := os.WriteFile("personal-schedule.json", textBytes, 0644); err != nil {
+		return nil, err
+	}
+	outputPath, _ := filepath.Abs("personal-schedule.json")
+
+	return &ExportResult{
+		PersonalCount:      len(items),
+		PersonalFileName:   "personal-schedule.json",
+		PersonalOutputPath: outputPath,
+		PersonalExported:   true,
+	}, nil
+}
+
+func extractPersonalScheduleItems(raw map[string]any) []map[string]any {
+	for _, key := range []string{"kbList", "items", "list", "rows", "data"} {
+		if items := mapSlice(raw[key]); len(items) > 0 {
+			return normalizePersonalItems(items)
+		}
+	}
+	for _, value := range raw {
+		if nested, ok := value.(map[string]any); ok {
+			if items := extractPersonalScheduleItems(nested); len(items) > 0 {
+				return items
+			}
+		}
+	}
+	return nil
+}
+
+func normalizePersonalItems(items []map[string]any) []map[string]any {
+	out := make([]map[string]any, 0, len(items))
+	for index, item := range items {
+		next := map[string]any{}
+		for key, value := range item {
+			next[key] = value
+		}
+		courseName := textAny(firstExisting(item, "kcmc", "courseName", "name"))
+		sectionName := firstNonEmpty(
+			textAny(firstExisting(item, "jxbmc", "sectionName", "jxbmc_name")),
+			courseName,
+			fmt.Sprintf("个人课表课程-%d", index+1),
+		)
+		next["kcmc"] = firstNonEmpty(courseName, sectionName)
+		next["courseName"] = next["kcmc"]
+		next["jxbmc"] = sectionName
+		next["sectionName"] = sectionName
+		next["jzgxx"] = firstNonEmpty(textAny(firstExisting(item, "xm", "jsxm", "jzgxx", "teacher")), textAny(item["jsxx"]))
+		next["jxdd"] = firstNonEmpty(textAny(firstExisting(item, "cdmc", "jxdd", "location")), textAny(item["lh"]))
+		next["sksj"] = firstNonEmpty(textAny(firstExisting(item, "sksj", "time", "schedule")), scheduleTextFromPersonal(item))
+		next["jxb_id"] = firstNonEmpty(textAny(firstExisting(item, "jxb_id", "sectionId", "id")), fmt.Sprintf("personal-%d", index+1))
+		next["id"] = next["jxb_id"]
+		next["source"] = "personal-schedule"
+		out = append(out, next)
+	}
+	return out
+}
+
+func scheduleTextFromPersonal(item map[string]any) string {
+	day := textAny(firstExisting(item, "xqjmc", "xqj", "day"))
+	if day == "" {
+		return ""
+	}
+	dayLabel := day
+	if number, err := strconv.Atoi(day); err == nil && number >= 1 && number <= 7 {
+		dayLabel = []string{"星期一", "星期二", "星期三", "星期四", "星期五", "星期六", "星期日"}[number-1]
+	}
+	period := firstNonEmpty(textAny(firstExisting(item, "jc", "jcs", "period")), textAny(item["jcstr"]))
+	weeks := firstNonEmpty(textAny(firstExisting(item, "zcd", "zcdxx", "weeks")), "1-17周")
+	location := textAny(firstExisting(item, "cdmc", "jxdd", "location"))
+	text := strings.TrimSpace(dayLabel + "第" + period + "节{" + weeks + "}")
+	if location != "" {
+		text += location
+	}
+	return text
+}
+
+func mapSlice(value any) []map[string]any {
+	switch typed := value.(type) {
+	case []any:
+		out := make([]map[string]any, 0, len(typed))
+		for _, item := range typed {
+			if mapped, ok := item.(map[string]any); ok {
+				out = append(out, mapped)
+			}
+		}
+		return out
+	case []map[string]any:
+		return typed
+	default:
+		return nil
+	}
+}
+
+func firstExisting(item map[string]any, keys ...string) any {
+	for _, key := range keys {
+		if value, ok := item[key]; ok {
+			if textAny(value) != "" {
+				return value
+			}
+		}
+	}
+	return nil
+}
+
+func textAny(value any) string {
+	if value == nil {
+		return ""
+	}
+	return strings.TrimSpace(fmt.Sprint(value))
+}
+
+func termFromRequest(req ExportRequest) termParams {
+	xueNian := strings.TrimSpace(req.XueNian)
+	if xueNian == "" {
+		xueNian = "2026"
+	}
+	xueQi := strings.TrimSpace(req.XueQi)
+	if xueQi == "" {
+		xueQi = "1"
+	}
+	xqm := "12"
+	if xueQi == "1" {
+		xqm = "3"
+	}
+	return termParams{XueNian: xueNian, XueQi: xueQi, Xqm: xqm}
 }
 
 func (s *Service) RunExport(req ExportRequest) (*ExportResult, error) {
@@ -446,7 +613,7 @@ func (s *Service) RunExport(req ExportRequest) (*ExportResult, error) {
 		return nil, err
 	}
 
-	s.setStatus("exporting", "query", "登录成功，正在读取任务落实课程数据。", false, nil)
+	s.setStatus("exporting", "query", "登录成功，正在读取全校任务落实课程数据。", false, nil)
 	result, err := exp.exportCourse(req)
 	if err != nil {
 		err = explainExportError(err)
@@ -454,7 +621,24 @@ func (s *Service) RunExport(req ExportRequest) (*ExportResult, error) {
 		return nil, err
 	}
 
-	s.setStatus("success", "done", "课程导出完成", true, result)
+	s.setStatus("exporting", "personal", "全校课表已保存，正在读取个人课表。", false, result)
+	personal, err := exp.exportPersonalSchedule(req)
+	if err != nil {
+		result.PersonalExportError = explainExportError(err).Error()
+	} else {
+		result.PersonalCount = personal.PersonalCount
+		result.PersonalFileName = personal.PersonalFileName
+		result.PersonalOutputPath = personal.PersonalOutputPath
+		result.PersonalExported = true
+	}
+
+	message := "课程导出完成"
+	if result.PersonalExported {
+		message = "全校课表和个人课表均已导出完成"
+	} else if result.PersonalExportError != "" {
+		message = "全校课表已导出，个人课表导出失败：" + result.PersonalExportError
+	}
+	s.setStatus("success", "done", message, true, result)
 	return result, nil
 }
 

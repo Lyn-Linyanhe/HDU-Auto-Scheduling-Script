@@ -10,8 +10,11 @@ const els = {
   updatedAt: document.getElementById('updated-at'),
   steps: document.getElementById('steps'),
   courseCount: document.getElementById('course-count'),
+  personalCount: document.getElementById('personal-count'),
   fileName: document.getElementById('file-name'),
+  personalFileName: document.getElementById('personal-file-name'),
   outputPath: document.getElementById('output-path'),
+  personalOutputPath: document.getElementById('personal-output-path'),
   copyPath: document.getElementById('copy-path'),
   openOutput: document.getElementById('open-output'),
 };
@@ -42,7 +45,7 @@ function setMessage(text, type = '') {
 }
 
 function setStep(step, phase) {
-  const order = ['validate', 'login', 'query', 'done'];
+  const order = ['validate', 'login', 'query', 'personal', 'done'];
   const currentIndex = Math.max(0, order.indexOf(step));
   for (const item of els.steps.querySelectorAll('li')) {
     const index = order.indexOf(item.dataset.step);
@@ -61,10 +64,14 @@ function renderStatus(status = {}) {
   setMessage(status.error || status.message, type);
   els.updatedAt.textContent = status.updatedAt ? `更新于 ${formatTime(status.updatedAt)}` : '等待操作';
   els.courseCount.textContent = status.count ? String(status.count) : '-';
+  els.personalCount.textContent = status.personalExported ? String(status.personalCount || 0) : '-';
   els.fileName.textContent = status.fileName || '-';
+  els.personalFileName.textContent = status.personalFileName || (status.personalExportError ? '导出失败' : '-');
   els.outputPath.value = status.outputPath || '';
-  els.copyPath.disabled = !status.outputPath;
-  els.openOutput.disabled = !status.outputPath;
+  els.personalOutputPath.value = status.personalOutputPath || '';
+  const hasPath = Boolean(status.outputPath || status.personalOutputPath);
+  els.copyPath.disabled = !hasPath;
+  els.openOutput.disabled = !hasPath;
 }
 
 function formatTime(value) {
@@ -126,7 +133,10 @@ els.form.addEventListener('submit', async (event) => {
     const result = await postJSON('/api/export', payload);
     if (result.status) renderStatus(result.status);
     if (result.ok) {
-      setMessage(`导出完成：共 ${result.count || 0} 条课程数据。`, 'success');
+      const personalText = result.personalExported
+        ? `个人课表 ${result.personalCount || 0} 门。`
+        : `个人课表未导出：${result.personalExportError || '未知原因'}。`;
+      setMessage(`导出完成：全校教学班 ${result.count || 0} 个，${personalText}`, result.personalExported ? 'success' : '');
     } else {
       setMessage(result.error || '导出失败。', 'error');
     }
@@ -149,8 +159,9 @@ els.refresh.addEventListener('click', async () => {
 });
 
 els.copyPath.addEventListener('click', async () => {
-  if (!els.outputPath.value) return;
-  await navigator.clipboard.writeText(els.outputPath.value);
+  const paths = [els.outputPath.value, els.personalOutputPath.value].filter(Boolean);
+  if (!paths.length) return;
+  await navigator.clipboard.writeText(paths.join('\n'));
   setMessage('输出路径已复制。', 'success');
 });
 
@@ -158,7 +169,7 @@ els.openOutput.addEventListener('click', async () => {
   try {
     const result = await postJSON('/api/export/open-output');
     if (result.ok) {
-      setMessage('已打开 course.json 所在目录。', 'success');
+      setMessage('已打开 JSON 文件所在目录。', 'success');
     } else {
       setMessage(result.error || '打开目录失败。', 'error');
     }

@@ -101,13 +101,18 @@ func handleExport(state *appState) http.HandlerFunc {
 			return
 		}
 		writeJSON(w, map[string]any{
-			"ok":         true,
-			"count":      result.Count,
-			"courseName": result.CourseName,
-			"fileName":   result.FileName,
-			"outputPath": result.OutputPath,
-			"message":    "course.json 导出完成",
-			"status":     state.service.Status(),
+			"ok":                  true,
+			"count":               result.Count,
+			"courseName":          result.CourseName,
+			"fileName":            result.FileName,
+			"outputPath":          result.OutputPath,
+			"personalCount":       result.PersonalCount,
+			"personalFileName":    result.PersonalFileName,
+			"personalOutputPath":  result.PersonalOutputPath,
+			"personalExported":    result.PersonalExported,
+			"personalExportError": result.PersonalExportError,
+			"message":             "课程数据导出完成",
+			"status":              state.service.Status(),
 		})
 	}
 }

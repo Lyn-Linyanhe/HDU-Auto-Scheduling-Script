@@ -13,14 +13,14 @@
         <div class="eyebrow">HDU Course Exporter</div>
         <h1>HDU 课程数据导出器</h1>
       </div>
-      <div class="badge">本地运行 · 仅导出 course.json</div>
+      <div class="badge">本地运行 · 导出 course.json + personal-schedule.json</div>
     </header>
 
     <section class="layout">
       <form class="panel" id="export-form">
         <div class="panel-head">
           <h2>登录与学期</h2>
-          <p>联网阶段只访问学校新教务和统一身份认证；导出完成后会在当前目录生成 <code>course.json</code>。</p>
+          <p>联网阶段只访问学校新教务和统一身份认证；导出完成后会在当前目录生成全校课表和个人课表两个 JSON 文件。</p>
         </div>
 
         <div class="form-grid">
@@ -51,7 +51,7 @@
         </div>
 
         <div class="hint">
-          如果提示账号密码错误但你确认无误，优先检查是否需要先在浏览器完成统一身份认证，或学校登录页是否临时调整。
+          个人课表会保存为 <code>personal-schedule.json</code>。离线排课助手检测到它后，会自动作为个人课表底板导入并锁定。
         </div>
       </form>
 
@@ -64,26 +64,39 @@
         <ol class="steps" id="steps">
           <li data-step="validate"><span></span>参数检查</li>
           <li data-step="login"><span></span>登录学校系统</li>
-          <li data-step="query"><span></span>读取课程数据</li>
-          <li data-step="done"><span></span>写入 course.json</li>
+          <li data-step="query"><span></span>读取全校课表</li>
+          <li data-step="personal"><span></span>读取个人课表</li>
+          <li data-step="done"><span></span>写入 JSON 文件</li>
         </ol>
 
         <div class="status-box" id="message">等待导出课程数据。</div>
 
         <dl class="result-grid">
           <div>
-            <dt>课程条数</dt>
+            <dt>全校教学班</dt>
             <dd id="course-count">-</dd>
           </div>
           <div>
-            <dt>输出文件</dt>
+            <dt>个人课表课程</dt>
+            <dd id="personal-count">-</dd>
+          </div>
+          <div>
+            <dt>全校课表文件</dt>
             <dd id="file-name">-</dd>
+          </div>
+          <div>
+            <dt>个人课表文件</dt>
+            <dd id="personal-file-name">-</dd>
           </div>
         </dl>
 
         <label class="path-row">
-          <span>输出路径</span>
+          <span>全校课表路径</span>
           <input id="output-path" readonly />
+        </label>
+        <label class="path-row">
+          <span>个人课表路径</span>
+          <input id="personal-output-path" readonly />
         </label>
 
         <div class="actions compact">

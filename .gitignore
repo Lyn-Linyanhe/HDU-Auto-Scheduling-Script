@@ -1,5 +1,6 @@
 /dist/
 /course.json
+/personal-schedule.json
 *.xlsx
 *.xls
 *.exe
