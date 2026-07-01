@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	neturl "net/url"
 	"os"
 	"os/exec"
 	"path"
@@ -21,6 +22,7 @@ import (
 var webFS embed.FS
 
 const addr = "127.0.0.1:6789"
+const maxImportBytes = 50 << 20
 
 func main() {
 	mux := http.NewServeMux()
@@ -35,7 +37,12 @@ func main() {
 	}
 
 	fmt.Println("HDU Offline Scheduler running at http://" + addr)
-	if err := http.ListenAndServe(addr, withCORS(mux)); err != nil {
+	server := &http.Server{
+		Addr:              addr,
+		Handler:           withLocalCORS(mux, "6789"),
+		ReadHeaderTimeout: 5 * time.Second,
+	}
+	if err := server.ListenAndServe(); err != nil {
 		panic(err)
 	}
 }
@@ -52,9 +59,18 @@ func openBrowser(url string) {
 	}
 }
 
-func withCORS(next http.Handler) http.Handler {
+func withLocalCORS(next http.Handler, port string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", "*")
+		origin := r.Header.Get("Origin")
+		if origin != "" {
+			parsed, err := neturl.Parse(origin)
+			if err != nil || !isAllowedLocalOrigin(parsed, port) {
+				http.Error(w, "forbidden origin", http.StatusForbidden)
+				return
+			}
+			w.Header().Set("Access-Control-Allow-Origin", origin)
+			w.Header().Set("Vary", "Origin")
+		}
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
 		w.Header().Set("Access-Control-Allow-Methods", "GET,POST,OPTIONS")
 		if r.Method == http.MethodOptions {
@@ -63,6 +79,13 @@ func withCORS(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+func isAllowedLocalOrigin(origin *neturl.URL, port string) bool {
+	host := strings.ToLower(origin.Hostname())
+	return origin.Scheme == "http" &&
+		origin.Port() == port &&
+		(host == "127.0.0.1" || host == "localhost" || host == "::1")
 }
 
 func serveStatic(w http.ResponseWriter, r *http.Request) {
@@ -132,12 +155,17 @@ func handlePersonalSchedule(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusNotFound)
 		return
 	}
-	payload, err := school.DecodeCoursePayload(data)
-	if err != nil {
+	var raw struct {
+		Items []map[string]any `json:"items"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
 		http.Error(w, err.Error(), http.StatusNotFound)
 		return
 	}
-	writeJSON(w, map[string]any{"items": payload.Items})
+	if raw.Items == nil {
+		raw.Items = []map[string]any{}
+	}
+	writeJSON(w, map[string]any{"items": raw.Items})
 }
 
 func handleImport(w http.ResponseWriter, r *http.Request) {
@@ -145,6 +173,7 @@ func handleImport(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+	r.Body = http.MaxBytesReader(w, r.Body, maxImportBytes)
 	body, err := readBody(r)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	neturl "net/url"
 	"os"
 	"os/exec"
 	"path"
@@ -20,6 +21,7 @@ import (
 var webFS embed.FS
 
 const addr = "127.0.0.1:6790"
+const maxExportRequestBytes = 1 << 20
 
 type appState struct {
 	service *school.Service
@@ -39,7 +41,12 @@ func main() {
 	}
 
 	fmt.Println("HDU Course Exporter running at http://" + addr)
-	if err := http.ListenAndServe(addr, withCORS(mux)); err != nil {
+	server := &http.Server{
+		Addr:              addr,
+		Handler:           withLocalCORS(mux, "6790"),
+		ReadHeaderTimeout: 5 * time.Second,
+	}
+	if err := server.ListenAndServe(); err != nil {
 		panic(err)
 	}
 }
@@ -56,9 +63,18 @@ func openBrowser(url string) {
 	}
 }
 
-func withCORS(next http.Handler) http.Handler {
+func withLocalCORS(next http.Handler, port string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", "*")
+		origin := r.Header.Get("Origin")
+		if origin != "" {
+			parsed, err := neturl.Parse(origin)
+			if err != nil || !isAllowedLocalOrigin(parsed, port) {
+				http.Error(w, "forbidden origin", http.StatusForbidden)
+				return
+			}
+			w.Header().Set("Access-Control-Allow-Origin", origin)
+			w.Header().Set("Vary", "Origin")
+		}
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
 		w.Header().Set("Access-Control-Allow-Methods", "GET,POST,OPTIONS")
 		if r.Method == http.MethodOptions {
@@ -67,6 +83,13 @@ func withCORS(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+func isAllowedLocalOrigin(origin *neturl.URL, port string) bool {
+	host := strings.ToLower(origin.Hostname())
+	return origin.Scheme == "http" &&
+		origin.Port() == port &&
+		(host == "127.0.0.1" || host == "localhost" || host == "::1")
 }
 
 func serveStatic(w http.ResponseWriter, r *http.Request) {
@@ -91,6 +114,7 @@ func handleExport(state *appState) http.HandlerFunc {
 			return
 		}
 		var req school.ExportRequest
+		r.Body = http.MaxBytesReader(w, r.Body, maxExportRequestBytes)
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
