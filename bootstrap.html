@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>HDU 模拟排课助手 - 导入</title>
+  <link rel="stylesheet" href="/styles.css?v=ui2" />
+</head>
+<body>
+  <header class="topbar">
+    <div>
+      <div class="eyebrow">启动页</div>
+      <h1>导入 course.json</h1>
+    </div>
+    <div class="topbar-actions">
+      <a class="ghost-btn" href="/scheduler.html">直接进入排课页</a>
+      <button class="primary-btn" id="refresh-status">检查数据</button>
+    </div>
+  </header>
+
+  <main class="layout bootstrap-layout">
+    <section class="panel intro-panel">
+      <h2>流程</h2>
+      <ol class="steps">
+        <li>如果当前目录已有可用 <code>course.json</code>，会直接进入排课页。</li>
+        <li>没有的话，请先运行 <code>hdu-course-exporter.exe</code> 生成课程数据。</li>
+        <li>然后拖拽或粘贴本地 <code>course.json</code> 进行导入。</li>
+      </ol>
+      <div class="status-row">
+        <span class="status-pill" id="status-pill">检查中</span>
+        <span class="muted" id="status-text">正在读取本地课程文件。</span>
+      </div>
+    </section>
+
+    <section class="panel login-panel">
+      <div class="panel-head">
+        <h2>课程数据来源</h2>
+        <span class="muted">导出和排课已经拆成两个独立程序</span>
+      </div>
+      <div class="login-grid">
+        <article class="method-card">
+          <div class="method-title">第一步：导出课程</div>
+          <p>运行 <code>hdu-course-exporter.exe</code>，登录新教务并生成 <code>course.json</code>。</p>
+          <div class="method-actions">
+            <button class="primary-btn" id="copy-login-note">复制说明</button>
+          </div>
+        </article>
+        <article class="method-card">
+          <div class="method-title">第二步：导入排课</div>
+          <p>把导出的 <code>course.json</code> 放到本程序目录，或在下方拖拽导入。</p>
+          <div class="method-actions">
+            <button class="ghost-btn" id="skip-if-ready">检查 course.json</button>
+          </div>
+        </article>
+      </div>
+    </section>
+
+    <section class="panel import-panel">
+      <div class="panel-head">
+        <h2>手动导入</h2>
+        <span class="muted">已有 course.json 时可以直接导入</span>
+      </div>
+      <label class="dropzone" id="dropzone">
+        <input id="file-input" type="file" accept=".json,application/json" />
+        <strong>拖拽 course.json 到这里</strong>
+        <span>或者点击选择文件</span>
+      </label>
+      <textarea id="raw-json" placeholder="也可以直接粘贴 course.json 内容"></textarea>
+      <div class="method-actions">
+        <button class="ghost-btn" id="paste-save">保存并继续</button>
+        <button class="primary-btn" id="skip-if-ready-bottom">如果已存在则继续</button>
+      </div>
+    </section>
+  </main>
+
+  <script src="/shared.js?v=ui2"></script>
+  <script src="/bootstrap.js?v=ui2"></script>
+</body>
+</html>

@@ -1,0 +1,10 @@
+/dist/
+/course.json
+*.xlsx
+*.xls
+*.exe
+*.log
+.env
+.env.*
+.DS_Store
+Thumbs.db

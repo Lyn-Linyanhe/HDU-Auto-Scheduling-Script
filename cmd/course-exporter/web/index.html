@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>HDU 课程数据导出器</title>
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <main class="shell">
+    <section class="panel">
+      <div class="eyebrow">HDU Course Exporter</div>
+      <h1>课程数据导出器</h1>
+      <p class="muted">这个程序只负责联网登录新教务并生成 <code>course.json</code>。生成后，把文件交给离线排课助手使用。</p>
+
+      <div class="form-grid">
+        <label>
+          <span>学号 / 工号</span>
+          <input id="username" autocomplete="username" />
+        </label>
+        <label>
+          <span>密码</span>
+          <input id="password" type="password" autocomplete="current-password" />
+        </label>
+        <label>
+          <span>学年</span>
+          <input id="xue-nian" value="2025" />
+        </label>
+        <label>
+          <span>学期</span>
+          <select id="xue-qi">
+            <option value="2">第二学期</option>
+            <option value="1">第一学期</option>
+          </select>
+        </label>
+      </div>
+
+      <div class="actions">
+        <button id="export" class="primary-btn">开始导出</button>
+        <button id="status" class="ghost-btn">查看状态</button>
+      </div>
+
+      <div class="status-box" id="message">等待操作。</div>
+    </section>
+  </main>
+  <script src="/main.js"></script>
+</body>
+</html>

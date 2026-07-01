@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>HDU 排课助手</title>
+  <link rel="stylesheet" href="/styles.css?v=ui2" />
+</head>
+<body class="booting">
+  <main class="boot-screen">
+    <div class="boot-card">
+      <div class="eyebrow">离线排课助手</div>
+      <h1>正在检查课程数据</h1>
+      <p id="boot-status">请稍候。</p>
+    </div>
+  </main>
+  <script>
+    (async () => {
+      const el = document.getElementById('boot-status');
+      try {
+        const resp = await fetch('/api/status', { cache: 'no-store' });
+        const data = await resp.json();
+        location.replace(data.ready ? '/scheduler.html?v=ui2' : '/bootstrap.html?v=ui2');
+      } catch (err) {
+        el.textContent = '本地服务不可用，正在进入导入页。';
+        setTimeout(() => location.replace('/bootstrap.html?v=ui2'), 600);
+      }
+    })();
+  </script>
+</body>
+</html>

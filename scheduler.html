@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>HDU 课表自动化编排助手</title>
+  <link rel="stylesheet" href="/styles.css?v=v3" />
+</head>
+<body>
+  <header class="topbar compact-topbar">
+    <div>
+      <div class="eyebrow">离线模拟排课</div>
+      <h1>HDU课表自动化编排助手</h1>
+      <p class="muted" id="subtitle">正在读取本地课程数据。</p>
+    </div>
+    <div class="topbar-actions">
+      <a class="ghost-btn" href="/bootstrap.html">返回导入页</a>
+      <button class="primary-btn" id="reload-course">重新读取 course.json</button>
+    </div>
+  </header>
+
+  <main class="layout scheduler-layout">
+    <section class="panel timetable-panel">
+      <div class="panel-head timetable-head">
+        <div>
+          <h2>课表预览</h2>
+          <p class="muted mini-text" id="candidate-title">当前显示：已选课程预览</p>
+        </div>
+        <div class="summary-chips" id="summary-chips"></div>
+      </div>
+      <div class="timetable-candidate-controls">
+        <button class="ghost-btn small" id="table-candidate-prev">上一方案</button>
+        <span class="candidate-page" id="table-result-count">0 个方案</span>
+        <button class="ghost-btn small" id="table-candidate-next">下一方案</button>
+        <input id="table-candidate-page" class="candidate-page-input" type="number" min="1" step="1" placeholder="页码" />
+        <button class="primary-btn small" id="table-candidate-preview">显示此方案</button>
+        <button class="ghost-btn small" id="table-candidate-return">返回原课表</button>
+      </div>
+      <div id="timetable" class="timetable"></div>
+    </section>
+
+    <aside class="side-column">
+      <section class="panel import-schedule-panel">
+        <div class="panel-head">
+          <h2>现有课表</h2>
+          <div class="topbar-actions">
+            <button class="ghost-btn small" id="export-current">导出当前课表</button>
+            <button class="ghost-btn small" id="clear-base">清除底板</button>
+          </div>
+        </div>
+        <label class="inline-file">
+          <input id="base-file" type="file" accept=".json,application/json" />
+          <span>一键导入个人/班级 JSON 课表</span>
+        </label>
+        <div class="base-summary" id="base-summary">尚未导入现有课表。</div>
+      </section>
+
+      <section class="panel search-panel">
+        <div class="panel-head">
+          <h2>课程查询</h2>
+          <span class="muted" id="course-count">0 门</span>
+        </div>
+        <input id="search-input" class="search-input" placeholder="课程名、教师、时间、地点、编号" />
+        <div id="course-list" class="course-list"></div>
+      </section>
+
+      <section class="panel selected-panel">
+        <div class="panel-head">
+          <h2>已选课组</h2>
+          <button class="ghost-btn small" id="clear-selected">清空</button>
+        </div>
+        <div id="selected-list" class="selected-list"></div>
+      </section>
+    </aside>
+
+    <section class="panel control-panel">
+      <div class="panel-head">
+        <div>
+          <h2>约束与候选</h2>
+          <p class="muted mini-text" id="estimate-text">调整约束后，可先估算候选数量。</p>
+        </div>
+        <div class="topbar-actions">
+          <button class="ghost-btn" id="estimate">估算候选数量</button>
+          <button class="primary-btn" id="generate">生成候选课表</button>
+        </div>
+      </div>
+
+      <div class="constraint-sections">
+        <section class="constraint-block">
+          <h3>课程级约束</h3>
+          <div class="control-grid">
+            <label><span>学分下限</span><input id="min-credit" type="number" min="0" step="0.5" /></label>
+            <label><span>学分上限</span><input id="max-credit" type="number" min="0" max="45" step="0.5" /></label>
+            <textarea id="required-courses" class="hidden-state-field" readonly aria-hidden="true"></textarea>
+            <div class="quick-constraint-box required-picked-box">
+              <span>已加入必选</span>
+              <div id="required-selected-picks" class="required-selected-picks"></div>
+            </div>
+            <div class="quick-constraint-box">
+              <span>从已选课程快速添加</span>
+              <div id="required-quick-picks" class="quick-picks"></div>
+            </div>
+            <div class="quick-constraint-box required-search-box">
+              <span>搜索全体课程添加必选</span>
+              <input id="required-search" class="constraint-search" placeholder="课程名称、课程编号" />
+              <div id="required-search-results" class="required-search-results"></div>
+            </div>
+            <div class="teacher-row">
+              <label><span>排除教师</span><textarea id="blocked-teachers" rows="3" placeholder="多个教师用换行或逗号分隔"></textarea></label>
+              <label><span>偏好教师</span><textarea id="preferred-teachers" rows="3" placeholder="多个教师用换行或逗号分隔"></textarea></label>
+            </div>
+          </div>
+        </section>
+
+        <section class="constraint-block">
+          <h3>时间级约束</h3>
+          <div class="control-grid">
+            <label><span>最多早八天数</span><input id="max-early" type="number" min="0" max="5" /></label>
+            <label><span>最多午间压缩天数</span><input id="max-lunch" type="number" min="0" max="5" /></label>
+            <label><span>最多晚课天数</span><input id="max-late" type="number" min="0" max="5" /></label>
+            <label><span>最少全天无课天数</span><input id="min-free-days" type="number" min="0" max="5" /></label>
+            <div class="constraint-help">生成候选时会先过滤掉不满足的方案；排序时全天无课天数更多的方案会排在更前面。</div>
+          </div>
+        </section>
+
+        <section class="constraint-block">
+          <h3>方案级约束</h3>
+          <div class="scheme-top-grid">
+            <div class="quick-constraint-box full-label">
+              <span>已加入的方案级约束</span>
+              <div id="scheme-current-rules" class="scheme-rule-list"></div>
+            </div>
+            <div class="quick-constraint-box full-label">
+              <span>自动识别的关联课程</span>
+              <div id="linked-course-suggestions" class="linked-course-suggestions"></div>
+            </div>
+          </div>
+          <div class="quick-constraint-box full-label scheme-custom-row">
+            <span>自定义课程约束</span>
+            <div class="scheme-custom-form">
+              <input id="scheme-left-course" class="constraint-search" placeholder="课程名称或课程号" />
+              <select id="scheme-mode" class="constraint-select">
+                <option value="pair">强制一起</option>
+                <option value="teacher">教师一致</option>
+              </select>
+              <input id="scheme-right-course" class="constraint-search" placeholder="课程名称或课程号" />
+              <button id="scheme-add-rule" class="primary-btn small" type="button">加入约束</button>
+            </div>
+            <div class="constraint-help">输入两个课程名称或课程号后加入约束，已加入的规则会显示在上方。</div>
+          </div>
+          <textarea id="pair-rules" class="hidden-state-field" aria-hidden="true"></textarea>
+          <textarea id="same-teacher-rules" class="hidden-state-field" aria-hidden="true"></textarea>
+        </section>
+      </div>
+
+      <div class="candidate-browser">
+        <div class="candidate-toolbar">
+          <button class="ghost-btn small" id="candidate-prev">上一页</button>
+          <div class="candidate-page" id="result-count">0 个方案</div>
+          <button class="ghost-btn small" id="candidate-next">下一页</button>
+          <input id="candidate-page" class="candidate-page-input" type="number" min="1" step="1" placeholder="页码" />
+          <button class="primary-btn small" id="candidate-preview">显示此方案</button>
+          <button class="ghost-btn small" id="candidate-return">返回原课表</button>
+          <button class="ghost-btn small" id="candidate-favorite">收藏</button>
+          <button class="danger-btn small" id="candidate-dismiss">删除</button>
+          <button class="ghost-btn small" id="candidate-favorites-view">收藏夹</button>
+        </div>
+        <div id="result-list" class="result-list"></div>
+      </div>
+    </section>
+  </main>
+
+  <div class="course-modal" id="course-modal" aria-hidden="true">
+    <div class="course-modal-backdrop" data-modal-close></div>
+    <section class="course-dialog" role="dialog" aria-modal="true" aria-labelledby="course-modal-title">
+      <button class="modal-close" data-modal-close type="button">关闭</button>
+      <div class="modal-title-row">
+        <div>
+          <div class="eyebrow">选课详情</div>
+          <h2 id="course-modal-title">课程详情</h2>
+        </div>
+        <span class="modal-status" id="course-modal-status">模拟</span>
+      </div>
+      <div id="course-modal-body" class="course-modal-body"></div>
+      <div class="modal-actions">
+        <button class="primary-btn" id="modal-select-toggle" type="button">选课</button>
+        <button class="ghost-btn" id="modal-lock-toggle" type="button">锁定</button>
+        <button class="ghost-btn" data-modal-close type="button">关闭</button>
+      </div>
+    </section>
+  </div>
+
+  <script src="/shared.js?v=v3"></script>
+  <script src="/scheduler.js?v=v3"></script>
+</body>
+</html>
