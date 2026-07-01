@@ -19,13 +19,13 @@
 
 运行离线排课助手：
 
-```bash
-go run .
+```bash   ”“bash
+go run .   快跑。   快跑。
 ```
 
 运行课程数据导出器：
 
-```bash
+```bash   ”“bash
 go run ./cmd/course-exporter
 ```
 
@@ -33,11 +33,7 @@ go run ./cmd/course-exporter
 
 ## 打包
 
-```bash
-go build -buildvcs=false -o dist/hdu-offline-scheduler.exe .
-go build -buildvcs=false -o dist/hdu-course-exporter.exe ./cmd/course-exporter
+```bash   ”“bash   ”“bash
+go build -buildvcs=false -o dist/hdu-offline-scheduler.exe .运行build -buildvcs=false -o dist/hdu-offline-scheduler.exe。运行build -buildvcs=false -o dist/hdu-offline-scheduler.exe。运行build -buildvcs=false -o dist/hdu-offline-scheduler.exe。
+go build -buildvcs=false -o dist/hdu-course-exporter.exe ./cmd/course-exporter执行命令build -buildvcs=false -o dist/ du-course-export .exe ./cmd/course-export
 ```
-
-## 数据文件
-
-`course.json`、`personal-schedule.json`、Excel 文件和 `dist/` 下的 exe/数据默认不提交到 Git。需要分发时建议单独打包 release。
