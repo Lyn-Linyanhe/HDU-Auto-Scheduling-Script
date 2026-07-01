@@ -87,7 +87,7 @@
   function syncForm() {
     els.searchInput.value = state.query || '';
     els.minCredit.value = state.minCredit ?? 0;
-    els.maxCredit.value = state.maxCredit ?? 30;
+    els.maxCredit.value = state.maxCredit ?? 36;
     els.maxEarly.value = state.maxEarly ?? 5;
     els.maxLunch.value = state.maxLunch ?? 5;
     els.maxLate.value = state.maxLate ?? 5;
@@ -102,7 +102,7 @@
   function persistState() {
     state.query = els.searchInput.value;
     state.minCredit = Number(els.minCredit.value || 0);
-    state.maxCredit = Number(els.maxCredit.value || 30);
+    state.maxCredit = Number(els.maxCredit.value || 36);
     state.maxEarly = clampDayLimit(els.maxEarly.value);
     state.maxLunch = clampDayLimit(els.maxLunch.value);
     state.maxLate = clampDayLimit(els.maxLate.value);

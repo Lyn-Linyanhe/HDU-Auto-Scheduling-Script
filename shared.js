@@ -363,7 +363,7 @@
   function constraintsFromState(state) {
     return {
       minCredit: Number(state.minCredit || 0),
-      maxCredit: Number(state.maxCredit || 30),
+      maxCredit: Number(state.maxCredit || 36),
       maxEarly: Number(state.maxEarly ?? 5),
       maxLunch: Number(state.maxLunch ?? 5),
       maxLate: Number(state.maxLate ?? 5),
