@@ -32,6 +32,7 @@ func main() {
 	mux.HandleFunc("/", serveStatic)
 	mux.HandleFunc("/api/export", handleExport(state))
 	mux.HandleFunc("/api/export/status", handleExportStatus(state))
+	mux.HandleFunc("/api/export/open-output", handleOpenOutput(state))
 
 	if os.Getenv("HDU_NO_BROWSER") != "1" {
 		go openBrowser("http://" + addr + "/")
@@ -96,7 +97,7 @@ func handleExport(state *appState) http.HandlerFunc {
 		}
 		result, err := state.service.RunExport(req)
 		if err != nil {
-			writeJSON(w, map[string]any{"ok": false, "error": err.Error()})
+			writeJSON(w, map[string]any{"ok": false, "error": err.Error(), "status": state.service.Status()})
 			return
 		}
 		writeJSON(w, map[string]any{
@@ -104,7 +105,9 @@ func handleExport(state *appState) http.HandlerFunc {
 			"count":      result.Count,
 			"courseName": result.CourseName,
 			"fileName":   result.FileName,
+			"outputPath": result.OutputPath,
 			"message":    "course.json 导出完成",
+			"status":     state.service.Status(),
 		})
 	}
 }
@@ -116,6 +119,40 @@ func handleExportStatus(state *appState) http.HandlerFunc {
 			return
 		}
 		writeJSON(w, state.service.Status())
+	}
+}
+
+func handleOpenOutput(state *appState) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		status := state.service.Status()
+		outputPath := strings.TrimSpace(status.OutputPath)
+		if outputPath == "" {
+			outputPath, _ = filepath.Abs("course.json")
+		}
+		if err := openOutputPath(outputPath); err != nil {
+			writeJSON(w, map[string]any{"ok": false, "error": err.Error(), "path": outputPath})
+			return
+		}
+		writeJSON(w, map[string]any{"ok": true, "path": outputPath})
+	}
+}
+
+func openOutputPath(filePath string) error {
+	dir := filepath.Dir(filePath)
+	switch runtime.GOOS {
+	case "windows":
+		if _, err := os.Stat(filePath); err == nil {
+			return exec.Command("explorer.exe", "/select,", filePath).Start()
+		}
+		return exec.Command("explorer.exe", dir).Start()
+	case "darwin":
+		return exec.Command("open", dir).Start()
+	default:
+		return exec.Command("xdg-open", dir).Start()
 	}
 }
 

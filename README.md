@@ -1,28 +1,36 @@
-# HDU Auto Scheduling Script
+# HDU 课表自动化编排助手
 
-HDU 课表自动化编排助手，包含两个本地工具：
+这是一个面向杭电选课场景的本地工具集合，当前拆成两个独立可打包程序：
 
-- `hdu-offline-scheduler`：离线模拟排课与候选课表生成。
-- `hdu-course-exporter`：课程数据导出器，用于生成 `course.json`。
+- `hdu-course-exporter`：课程数据导出器，负责联网登录新教务并生成 `course.json`。
+- `hdu-offline-scheduler`：离线排课助手，读取 `course.json` 或 Excel 后，在浏览器里完成模拟排课、约束筛选和候选方案浏览。
 
 ## 功能
 
-- 本地读取 `course.json` 或从 Excel 自动转换课程数据。
+- 本地读取 `course.json`，缺失时可从任务落实 Excel 自动转换。
 - 支持导入个人/班级课表作为已选底板。
-- 支持课程搜索、加入、移除、锁定和冲突提示。
-- 支持候选课表生成、翻页、收藏、删除和预览。
+- 支持课程搜索、加入、移除、锁定、冲突提示和单双周展示。
 - 支持课程级、时间级、方案级约束。
+- 支持候选课表估算、生成、翻页预览、收藏、删除和导入显示。
 - 支持导出当前课表 JSON 和课表截图。
 
 ## 本地运行
+
+运行离线排课助手：
 
 ```bash
 go run .
 ```
 
-浏览器会自动打开离线排课助手。
+运行课程数据导出器：
 
-## 构建
+```bash
+go run ./cmd/course-exporter
+```
+
+两个程序都会自动打开本地浏览器页面。
+
+## 打包
 
 ```bash
 go build -buildvcs=false -o dist/hdu-offline-scheduler.exe .
@@ -31,4 +39,4 @@ go build -buildvcs=false -o dist/hdu-course-exporter.exe ./cmd/course-exporter
 
 ## 数据文件
 
-`course.json`、Excel 文件和 `dist/` 下的 exe/数据默认不提交到 Git。需要分发时可以单独打包 release。
+`course.json`、Excel 文件和 `dist/` 下的 exe/数据默认不提交到 Git。需要分发时建议单独打包 release。

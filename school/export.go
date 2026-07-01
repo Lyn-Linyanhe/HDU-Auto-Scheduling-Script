@@ -15,6 +15,7 @@ import (
 	"net/http/cookiejar"
 	"net/url"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -28,6 +29,7 @@ type ExportResult struct {
 	Count      int    `json:"count"`
 	CourseName string `json:"courseName"`
 	FileName   string `json:"fileName"`
+	OutputPath string `json:"outputPath"`
 }
 
 type exporter struct {
@@ -72,7 +74,7 @@ func (e *exporter) loginCAS(mode, username, password string) error {
 		return err
 	}
 	if mode == "qr" {
-		return errors.New("扫码登录需要在学校登录页完成认证后再导出")
+		return errors.New("扫码登录暂未实现，请先使用账号密码登录")
 	}
 
 	encryptedPassword, err := aesEncrypt(croypto, password)
@@ -111,7 +113,7 @@ func (e *exporter) loginCAS(mode, username, password string) error {
 	if containsAny(text, "用户名或密码错误", "用户名称或密码错误", "账号或密码错误") {
 		return errors.New("CAS 登录提示账号或密码不正确")
 	}
-	if strings.Contains(text, "统一身份认证") {
+	if strings.Contains(text, "统一身份认证") && !strings.Contains(text, "service=") {
 		return errors.New("CAS 登录未完成统一身份认证")
 	}
 
@@ -141,7 +143,7 @@ func (e *exporter) getCASLoginConfig() (execution, croypto string, err error) {
 		extractValue(text, "croypto"),
 	)
 	if execution == "" || croypto == "" {
-		return "", "", errors.New("未获取到 CAS 登录配置")
+		return "", "", errors.New("未获取到 CAS 登录配置，学校登录页可能已调整")
 	}
 	return execution, croypto, nil
 }
@@ -173,7 +175,7 @@ func (e *exporter) loginNewJW(username, password string) error {
 		extractBetween(text, `name="csrftoken" value="`, `"`),
 	)
 	if csrftoken == "" {
-		return errors.New("未获取到 csrftoken")
+		return errors.New("未获取到新教务登录令牌，学校登录页可能已调整")
 	}
 
 	key, err := e.getPublicKey()
@@ -231,7 +233,7 @@ func (e *exporter) getPublicKey() (string, error) {
 		return "", err
 	}
 	if strings.TrimSpace(payload.Modulus) == "" {
-		return "", errors.New("未获取到公钥")
+		return "", errors.New("未获取到新教务登录公钥")
 	}
 	return payload.Modulus, nil
 }
@@ -398,15 +400,15 @@ func (e *exporter) exportCourse(req ExportRequest) (*ExportResult, error) {
 		return nil, errors.New("登录已失效，请重新登录")
 	}
 	if strings.Contains(text, "无功能权限") {
-		return nil, errors.New("任务落实查询未开放")
+		return nil, errors.New("任务落实查询未开放或当前账号没有权限")
 	}
 
 	var payload CoursePayload
 	if err := json.Unmarshal(body, &payload); err != nil {
-		return nil, err
+		return nil, errors.New("课程接口返回内容不是可解析的 JSON，可能仍停留在登录页")
 	}
 	if len(payload.Items) == 0 {
-		return nil, errors.New("没有拿到课程数据")
+		return nil, errors.New("没有拿到课程数据，请确认学年学期是否正确")
 	}
 
 	raw := map[string]any{"items": payload.Items}
@@ -414,40 +416,66 @@ func (e *exporter) exportCourse(req ExportRequest) (*ExportResult, error) {
 	if err := os.WriteFile("course.json", textBytes, 0644); err != nil {
 		return nil, err
 	}
+	outputPath, _ := filepath.Abs("course.json")
 
 	return &ExportResult{
 		Count:      len(payload.Items),
 		CourseName: InferCourseName(payload.Items),
 		FileName:   "course.json",
+		OutputPath: outputPath,
 	}, nil
 }
 
 func (s *Service) RunExport(req ExportRequest) (*ExportResult, error) {
+	if err := ValidateExportRequest(req); err != nil {
+		s.setError("validate", err)
+		return nil, err
+	}
+	if !s.beginRun() {
+		return nil, errors.New("已有导出任务正在进行，请等待当前任务完成")
+	}
+	defer s.endRun()
+
+	s.setStatus("validating", "validate", "参数检查通过，准备登录学校系统。", false, nil)
 	exp := newExporter()
+
+	s.setStatus("login", "login", "正在登录新教务；如果直登失败，会自动尝试统一身份认证。", false, nil)
 	if err := exp.login(req.Method, req.Username, req.Password); err != nil {
-		s.mu.Lock()
-		s.status = StatusResponse{Ready: false, Message: err.Error()}
-		s.mu.Unlock()
+		err = explainExportError(err)
+		s.setError("login", err)
 		return nil, err
 	}
 
+	s.setStatus("exporting", "query", "登录成功，正在读取任务落实课程数据。", false, nil)
 	result, err := exp.exportCourse(req)
 	if err != nil {
-		s.mu.Lock()
-		s.status = StatusResponse{Ready: false, Message: err.Error()}
-		s.mu.Unlock()
+		err = explainExportError(err)
+		s.setError("export", err)
 		return nil, err
 	}
 
-	s.mu.Lock()
-	s.status = StatusResponse{
-		Ready:      true,
-		Count:      result.Count,
-		CourseName: result.CourseName,
-		Message:    "课程导出完成",
-	}
-	s.mu.Unlock()
+	s.setStatus("success", "done", "课程导出完成", true, result)
 	return result, nil
+}
+
+func explainExportError(err error) error {
+	if err == nil {
+		return nil
+	}
+	text := err.Error()
+	lower := strings.ToLower(text)
+	switch {
+	case strings.Contains(text, "账号") || strings.Contains(text, "密码"):
+		return errors.New(text + "。如果确认密码正确，可能需要先在浏览器完成统一身份认证，或学校登录页已经更新。")
+	case strings.Contains(lower, "timeout") || strings.Contains(text, "超时"):
+		return errors.New("连接学校系统超时，请稍后重试。")
+	case strings.Contains(lower, "no such host") || strings.Contains(lower, "connection refused"):
+		return errors.New("无法连接学校系统，请检查网络、校园网或代理设置。")
+	case strings.Contains(text, "无功能权限") || strings.Contains(text, "未开放"):
+		return errors.New(text + "，请确认当前时间学校是否开放任务落实查询。")
+	default:
+		return errors.New(text)
+	}
 }
 
 func mustAtoi(v string) int {

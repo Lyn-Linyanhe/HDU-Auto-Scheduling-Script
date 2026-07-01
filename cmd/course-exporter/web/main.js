@@ -1,14 +1,24 @@
 const els = {
+  form: document.getElementById('export-form'),
   username: document.getElementById('username'),
   password: document.getElementById('password'),
   xueNian: document.getElementById('xue-nian'),
   xueQi: document.getElementById('xue-qi'),
   export: document.getElementById('export'),
-  status: document.getElementById('status'),
+  refresh: document.getElementById('refresh'),
   message: document.getElementById('message'),
+  updatedAt: document.getElementById('updated-at'),
+  steps: document.getElementById('steps'),
+  courseCount: document.getElementById('course-count'),
+  fileName: document.getElementById('file-name'),
+  outputPath: document.getElementById('output-path'),
+  copyPath: document.getElementById('copy-path'),
+  openOutput: document.getElementById('open-output'),
 };
 
-async function postJSON(url, body) {
+let polling = 0;
+
+async function postJSON(url, body = {}) {
   const response = await fetch(url, {
     method: 'POST',
     cache: 'no-store',
@@ -27,11 +37,73 @@ async function fetchJSON(url) {
 }
 
 function setMessage(text, type = '') {
-  els.message.textContent = text;
-  els.message.className = `status-box ${type}`;
+  els.message.textContent = text || '等待导出课程数据。';
+  els.message.className = `status-box ${type}`.trim();
 }
 
-els.export.addEventListener('click', async () => {
+function setStep(step, phase) {
+  const order = ['validate', 'login', 'query', 'done'];
+  const currentIndex = Math.max(0, order.indexOf(step));
+  for (const item of els.steps.querySelectorAll('li')) {
+    const index = order.indexOf(item.dataset.step);
+    item.classList.toggle('done', phase === 'success' || index < currentIndex);
+    item.classList.toggle('active', index === currentIndex && phase !== 'success' && phase !== 'error');
+    item.classList.toggle('error', index === currentIndex && phase === 'error');
+  }
+}
+
+function renderStatus(status = {}) {
+  const phase = status.phase || (status.ready ? 'success' : 'idle');
+  const step = status.step || 'validate';
+  const type = phase === 'success' ? 'success' : phase === 'error' ? 'error' : '';
+
+  setStep(step, phase);
+  setMessage(status.error || status.message, type);
+  els.updatedAt.textContent = status.updatedAt ? `更新于 ${formatTime(status.updatedAt)}` : '等待操作';
+  els.courseCount.textContent = status.count ? String(status.count) : '-';
+  els.fileName.textContent = status.fileName || '-';
+  els.outputPath.value = status.outputPath || '';
+  els.copyPath.disabled = !status.outputPath;
+  els.openOutput.disabled = !status.outputPath;
+}
+
+function formatTime(value) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString('zh-CN', { hour12: false });
+}
+
+function validatePayload(payload) {
+  if (!payload.username) return '请先填写学号或工号。';
+  if (!payload.password) return '请先填写密码。';
+  if (!/^\d{4}$/.test(payload.xueNian)) return '学年起始年份应为 4 位数字，例如 2026。';
+  return '';
+}
+
+function startPolling() {
+  stopPolling();
+  polling = window.setInterval(refreshStatus, 1200);
+}
+
+function stopPolling() {
+  if (polling) {
+    window.clearInterval(polling);
+    polling = 0;
+  }
+}
+
+async function refreshStatus() {
+  const status = await fetchJSON('/api/export/status');
+  renderStatus(status);
+  if (status.phase === 'success' || status.phase === 'error') {
+    stopPolling();
+    els.export.disabled = false;
+  }
+  return status;
+}
+
+els.form.addEventListener('submit', async (event) => {
+  event.preventDefault();
   const payload = {
     method: 'password',
     username: els.username.value.trim(),
@@ -39,31 +111,60 @@ els.export.addEventListener('click', async () => {
     xueNian: els.xueNian.value.trim(),
     xueQi: els.xueQi.value,
   };
-  if (!payload.username || !payload.password) {
-    setMessage('请先填写账号和密码。', 'error');
+  const validation = validatePayload(payload);
+  if (validation) {
+    setStep('validate', 'error');
+    setMessage(validation, 'error');
     return;
   }
+
   els.export.disabled = true;
-  setMessage('正在登录并导出课程数据，学校接口可能需要等待一会儿。');
+  setStep('validate', 'validating');
+  setMessage('正在提交导出任务，请稍候。');
+  startPolling();
   try {
     const result = await postJSON('/api/export', payload);
+    if (result.status) renderStatus(result.status);
     if (result.ok) {
-      setMessage(`导出完成：${result.count || 0} 条课程数据，文件 ${result.fileName || 'course.json'} 已生成。`, 'success');
+      setMessage(`导出完成：共 ${result.count || 0} 条课程数据。`, 'success');
     } else {
       setMessage(result.error || '导出失败。', 'error');
     }
   } catch (error) {
+    setStep('login', 'error');
     setMessage(String(error.message || error), 'error');
   } finally {
+    stopPolling();
     els.export.disabled = false;
+    await refreshStatus().catch(() => {});
   }
 });
 
-els.status.addEventListener('click', async () => {
+els.refresh.addEventListener('click', async () => {
   try {
-    const status = await fetchJSON('/api/export/status');
-    setMessage(status.message || (status.ready ? '已就绪。' : '空闲。'), status.ready ? 'success' : '');
+    await refreshStatus();
   } catch (error) {
     setMessage(String(error.message || error), 'error');
   }
 });
+
+els.copyPath.addEventListener('click', async () => {
+  if (!els.outputPath.value) return;
+  await navigator.clipboard.writeText(els.outputPath.value);
+  setMessage('输出路径已复制。', 'success');
+});
+
+els.openOutput.addEventListener('click', async () => {
+  try {
+    const result = await postJSON('/api/export/open-output');
+    if (result.ok) {
+      setMessage('已打开 course.json 所在目录。', 'success');
+    } else {
+      setMessage(result.error || '打开目录失败。', 'error');
+    }
+  } catch (error) {
+    setMessage(String(error.message || error), 'error');
+  }
+});
+
+refreshStatus().catch(() => {});

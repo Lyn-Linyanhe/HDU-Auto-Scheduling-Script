@@ -8,39 +8,89 @@
 </head>
 <body>
   <main class="shell">
-    <section class="panel">
-      <div class="eyebrow">HDU Course Exporter</div>
-      <h1>课程数据导出器</h1>
-      <p class="muted">这个程序只负责联网登录新教务并生成 <code>course.json</code>。生成后，把文件交给离线排课助手使用。</p>
-
-      <div class="form-grid">
-        <label>
-          <span>学号 / 工号</span>
-          <input id="username" autocomplete="username" />
-        </label>
-        <label>
-          <span>密码</span>
-          <input id="password" type="password" autocomplete="current-password" />
-        </label>
-        <label>
-          <span>学年</span>
-          <input id="xue-nian" value="2025" />
-        </label>
-        <label>
-          <span>学期</span>
-          <select id="xue-qi">
-            <option value="2">第二学期</option>
-            <option value="1">第一学期</option>
-          </select>
-        </label>
+    <header class="topbar">
+      <div>
+        <div class="eyebrow">HDU Course Exporter</div>
+        <h1>HDU 课程数据导出器</h1>
       </div>
+      <div class="badge">本地运行 · 仅导出 course.json</div>
+    </header>
 
-      <div class="actions">
-        <button id="export" class="primary-btn">开始导出</button>
-        <button id="status" class="ghost-btn">查看状态</button>
-      </div>
+    <section class="layout">
+      <form class="panel" id="export-form">
+        <div class="panel-head">
+          <h2>登录与学期</h2>
+          <p>联网阶段只访问学校新教务和统一身份认证；导出完成后会在当前目录生成 <code>course.json</code>。</p>
+        </div>
 
-      <div class="status-box" id="message">等待操作。</div>
+        <div class="form-grid">
+          <label>
+            <span>学号 / 工号</span>
+            <input id="username" autocomplete="username" placeholder="请输入学校账号" />
+          </label>
+          <label>
+            <span>密码</span>
+            <input id="password" type="password" autocomplete="current-password" placeholder="学校统一认证密码" />
+          </label>
+          <label>
+            <span>学年起始年份</span>
+            <input id="xue-nian" value="2026" inputmode="numeric" />
+          </label>
+          <label>
+            <span>学期</span>
+            <select id="xue-qi">
+              <option value="1">第一学期</option>
+              <option value="2">第二学期</option>
+            </select>
+          </label>
+        </div>
+
+        <div class="actions">
+          <button id="export" class="primary-btn" type="submit">开始导出</button>
+          <button id="refresh" class="ghost-btn" type="button">刷新状态</button>
+        </div>
+
+        <div class="hint">
+          如果提示账号密码错误但你确认无误，优先检查是否需要先在浏览器完成统一身份认证，或学校登录页是否临时调整。
+        </div>
+      </form>
+
+      <aside class="panel status-panel">
+        <div class="panel-head">
+          <h2>导出状态</h2>
+          <p id="updated-at">等待操作</p>
+        </div>
+
+        <ol class="steps" id="steps">
+          <li data-step="validate"><span></span>参数检查</li>
+          <li data-step="login"><span></span>登录学校系统</li>
+          <li data-step="query"><span></span>读取课程数据</li>
+          <li data-step="done"><span></span>写入 course.json</li>
+        </ol>
+
+        <div class="status-box" id="message">等待导出课程数据。</div>
+
+        <dl class="result-grid">
+          <div>
+            <dt>课程条数</dt>
+            <dd id="course-count">-</dd>
+          </div>
+          <div>
+            <dt>输出文件</dt>
+            <dd id="file-name">-</dd>
+          </div>
+        </dl>
+
+        <label class="path-row">
+          <span>输出路径</span>
+          <input id="output-path" readonly />
+        </label>
+
+        <div class="actions compact">
+          <button id="copy-path" class="ghost-btn" type="button" disabled>复制路径</button>
+          <button id="open-output" class="ghost-btn" type="button" disabled>打开目录</button>
+        </div>
+      </aside>
     </section>
   </main>
   <script src="/main.js"></script>
