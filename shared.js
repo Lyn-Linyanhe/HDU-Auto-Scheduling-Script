@@ -301,6 +301,93 @@
     ].filter(Boolean).join(' ').toLowerCase();
   }
 
+  function normalizeCourseTitle(value) {
+    return String(value || '')
+      .trim()
+      .replace(/[（(]?[一二三四五六七八九十0-9]+[)）]?$/g, '')
+      .trim()
+      .toLowerCase();
+  }
+
+  function practicalBaseName(value) {
+    return normalizeCourseTitle(value)
+      .replace(/(课程实践|开发实践|综合实践|课程设计|实验|实践|实训|设计)$/g, '')
+      .trim();
+  }
+
+  function hasPracticalSuffix(value) {
+    return /(课程实践|开发实践|综合实践|课程设计|实验|实践|实训|设计)$/i.test(normalizeCourseTitle(value));
+  }
+
+  function syntheticRequiredGroup(token, groups, strategy) {
+    const items = groups.flatMap((group) => group.items || []);
+    return {
+      id: `required:${strategy}:${token}`,
+      name: token,
+      items,
+      lockedItemId: '',
+      optional: false,
+      sourceGroups: groups.map((group) => group.id),
+      requiredStrategy: strategy,
+    };
+  }
+
+  function resolveRequiredCourseGroups(courses, token) {
+    const rawToken = String(token || '').trim();
+    const lower = rawToken.toLowerCase();
+    const normalized = normalizeCourseTitle(rawToken);
+    if (!rawToken) return { token: rawToken, groups: [], unresolved: true, strategy: 'empty' };
+
+    const groups = groupCourses(courses);
+    const codeMatches = groups.filter((group) => {
+      const ids = [
+        group.id,
+        baseCourseCode(group.id),
+        ...(group.items || []).flatMap((item) => [
+          item.groupId,
+          item.displayCode,
+          item.sectionName,
+          item.rawCourseCode,
+          item.id,
+          baseCourseCode(item.groupId),
+          baseCourseCode(item.displayCode),
+          baseCourseCode(item.sectionName),
+          baseCourseCode(item.id),
+        ]),
+      ].filter(Boolean).map((item) => String(item).toLowerCase());
+      return ids.includes(lower);
+    });
+    if (codeMatches.length) return { token: rawToken, groups: codeMatches, unresolved: false, strategy: 'code' };
+
+    const exactNameMatches = groups.filter((group) => normalizeCourseTitle(group.name) === normalized);
+    if (exactNameMatches.length) {
+      return {
+        token: rawToken,
+        groups: [syntheticRequiredGroup(rawToken, exactNameMatches, 'name')],
+        unresolved: false,
+        strategy: 'name',
+      };
+    }
+
+    if (hasPracticalSuffix(rawToken)) {
+      const base = practicalBaseName(rawToken);
+      const practicalMatches = groups.filter((group) => {
+        const name = normalizeCourseTitle(group.name);
+        return hasPracticalSuffix(name) && practicalBaseName(name) === base;
+      });
+      if (practicalMatches.length) {
+        return {
+          token: rawToken,
+          groups: [syntheticRequiredGroup(rawToken, practicalMatches, 'practical')],
+          unresolved: false,
+          strategy: 'practical',
+        };
+      }
+    }
+
+    return { token: rawToken, groups: [], unresolved: true, strategy: 'none' };
+  }
+
   function parsePairRules(text) {
     return String(text || '')
       .split(/[\n;；]+/)
@@ -609,6 +696,7 @@
     parsePairRules,
     baseCourseCode,
     courseSearchText,
+    resolveRequiredCourseGroups,
     groupCourses,
     filterCourses,
     countMetrics,

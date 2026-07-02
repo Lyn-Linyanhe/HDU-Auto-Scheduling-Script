@@ -109,4 +109,49 @@ if (!hugeEstimate.capped || elapsed > 500) {
   throw new Error(`Huge estimate should cap quickly, got ${JSON.stringify(hugeEstimate)} in ${elapsed}ms.`);
 }
 
+const requiredFixture = context.HDU.normalizeCourseData([
+  {
+    displayCode: '(2026-2027-1)-A9990001-01',
+    courseCode: '(2026-2027-1)-A9990001',
+    jxb_id: 'software-main-01',
+    jxbmc: '(2026-2027-1)-A9990001-01',
+    kcmc: '软件工程',
+    jzgxx: '甲老师',
+    sksj: '星期一第1-2节{1-17周}',
+    xf: '3.00',
+  },
+  {
+    displayCode: '(2026-2027-1)-A9990001-02',
+    courseCode: '(2026-2027-1)-A9990001',
+    jxb_id: 'software-main-02',
+    jxbmc: '(2026-2027-1)-A9990001-02',
+    kcmc: '软件工程',
+    jzgxx: '乙老师',
+    sksj: '星期二第1-2节{1-17周}',
+    xf: '3.00',
+  },
+  {
+    displayCode: '(2026-2027-1)-S9990001-01',
+    courseCode: '(2026-2027-1)-S9990001',
+    jxb_id: 'software-design-01',
+    jxbmc: '(2026-2027-1)-S9990001-01',
+    kcmc: '软件工程课程设计',
+    jzgxx: '甲老师',
+    sksj: '星期三第1-2节{1-17周}',
+    xf: '1.00',
+  },
+]);
+const mainRequired = context.HDU.resolveRequiredCourseGroups(requiredFixture, '软件工程');
+const practicalRequired = context.HDU.resolveRequiredCourseGroups(requiredFixture, '软件工程课程实践');
+if (mainRequired.unresolved || mainRequired.groups.length !== 1 || mainRequired.groups[0].items.length !== 2) {
+  throw new Error(`Required main-course matching failed: ${JSON.stringify(mainRequired)}`);
+}
+if (practicalRequired.unresolved || practicalRequired.groups.length !== 1 || practicalRequired.groups[0].items.length !== 1) {
+  throw new Error(`Required practical-course matching failed: ${JSON.stringify(practicalRequired)}`);
+}
+const requiredGenerated = context.HDU.generateSolutions([...mainRequired.groups, ...practicalRequired.groups], state, 20);
+if (requiredGenerated.results.length !== 2) {
+  throw new Error(`Expected two software/practical combinations, got ${requiredGenerated.results.length}.`);
+}
+
 console.log(`Worker smoke test passed: ${estimate.result.count} estimated, ${generated.result.results.length} generated.`);

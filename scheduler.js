@@ -359,16 +359,34 @@
     return HDU.parseList(els.requiredCourses.value);
   }
 
+  function requiredResolutions() {
+    return requiredTokens().map((token) => HDU.resolveRequiredCourseGroups(courses, token));
+  }
+
+  function unresolvedRequiredTokens() {
+    return requiredResolutions().filter((resolution) => resolution.unresolved);
+  }
+
+  function schedulerState() {
+    return {
+      ...state,
+      requiredCourses: '',
+    };
+  }
+
   function requiredDisplayLabel(token) {
-    const lower = String(token || '').toLowerCase();
-    const matches = courses.filter((item) => HDU.courseSearchText(item).includes(lower));
-    if (!matches.length) return { name: token, code: token, count: 0 };
-    const first = matches[0];
-    const code = HDU.baseCourseCode(first.displayCode || first.sectionName || first.groupId || token);
+    const resolution = HDU.resolveRequiredCourseGroups(courses, token);
+    if (resolution.unresolved) return { name: token, code: '未匹配到课程', count: 0 };
+    const items = resolution.groups.flatMap((group) => group.items || []);
+    const first = items[0] || {};
+    const names = [...new Set(resolution.groups.flatMap((group) => group.sourceGroups?.length ? [group.name] : [group.name]).filter(Boolean))];
+    const code = resolution.strategy === 'code'
+      ? HDU.baseCourseCode(first.displayCode || first.sectionName || first.groupId || token)
+      : `${resolution.strategy === 'practical' ? '关联匹配' : '课程名匹配'} · ${names.length || 1} 个课组`;
     return {
       name: first.courseName || token,
       code,
-      count: new Set(matches.map((item) => item.id)).size,
+      count: new Set(items.map((item) => item.id)).size,
     };
   }
 
@@ -889,13 +907,38 @@
       els.requiredSearchResults.innerHTML = '<span class="quick-empty">输入关键词后搜索课程</span>';
       return;
     }
-    const groups = HDU.groupCourses(courses.filter((course) => courseNameCodeText(course).includes(keyword))).slice(0, 20);
-    if (!groups.length) {
+    const groups = HDU.groupCourses(courses.filter((course) => courseNameCodeText(course).includes(keyword)))
+      .sort((a, b) => {
+        const aExact = a.name && a.name.toLowerCase() === keyword ? 0 : 1;
+        const bExact = b.name && b.name.toLowerCase() === keyword ? 0 : 1;
+        return aExact - bExact || a.name.localeCompare(b.name, 'zh-Hans-CN');
+      })
+      .slice(0, 20);
+    const aliasResolution = HDU.resolveRequiredCourseGroups(courses, els.requiredSearch.value.trim());
+    const aliasGroups = (!groups.length && !aliasResolution.unresolved) ? aliasResolution.groups : [];
+    if (!groups.length && !aliasGroups.length) {
       els.requiredSearchResults.innerHTML = '<span class="quick-empty">没有匹配课程</span>';
       return;
     }
     const existing = new Set(requiredTokens());
-    els.requiredSearchResults.innerHTML = groups.map((group) => {
+    els.requiredSearchResults.innerHTML = [
+      ...aliasGroups.map((group) => {
+        const token = aliasResolution.token;
+        const added = existing.has(token);
+        const source = group.sourceGroups?.length ? `关联到 ${group.sourceGroups.length} 个课组` : `${group.items.length} 个教学班`;
+        return `
+          <div class="required-search-item">
+            <div>
+              <strong>${escapeHtml(token)}</strong>
+              <span>${escapeHtml(source)} · ${group.items.length} 个教学班</span>
+            </div>
+            <button class="${added ? 'ghost-btn' : 'primary-btn'} small" type="button" data-search-required-token="${escapeHtml(token)}" ${added ? 'disabled' : ''}>
+              ${added ? '已加入' : '加入'}
+            </button>
+          </div>
+        `;
+      }),
+      ...groups.map((group) => {
       const sample = group.items[0];
       const token = constraintToken(sample);
       const added = existing.has(token);
@@ -910,7 +953,13 @@
           </button>
         </div>
       `;
-    }).join('');
+      }),
+    ].join('');
+    els.requiredSearchResults.querySelectorAll('[data-search-required-token]').forEach((button) => {
+      button.addEventListener('click', () => {
+        appendTextareaLine(els.requiredCourses, button.dataset.searchRequiredToken);
+      });
+    });
     els.requiredSearchResults.querySelectorAll('[data-search-required]').forEach((button) => {
       button.addEventListener('click', () => {
         const course = courses.find((item) => item.id === button.dataset.searchRequired);
@@ -1077,11 +1126,30 @@
   }
 
   function buildSolutions(limit = 500) {
-    return withSolutionSignatures(HDU.generateSolutions(candidateGroups(), state, limit));
+    return withSolutionSignatures(HDU.generateSolutions(candidateGroups(), schedulerState(), limit));
   }
 
   function candidateGroups() {
     const map = new Map();
+    const mergeGroup = (group, optional) => {
+      const entry = map.get(group.id) || {
+        id: group.id,
+        name: group.name,
+        items: [],
+        lockedItemId: group.lockedItemId || '',
+        optional: true,
+      };
+      const existing = new Set(entry.items.map((item) => item.id));
+      for (const item of group.items || []) {
+        if (!existing.has(item.id)) {
+          entry.items.push(item);
+          existing.add(item.id);
+        }
+      }
+      if (group.lockedItemId) entry.lockedItemId = group.lockedItemId;
+      entry.optional = Boolean(entry.lockedItemId) ? false : optional;
+      map.set(group.id, entry);
+    };
     for (const group of selectedGroups) {
       map.set(group.id, {
         id: group.id,
@@ -1091,15 +1159,10 @@
         optional: !group.lockedItemId,
       });
     }
-    for (const token of requiredTokens()) {
-      const lower = token.toLowerCase();
-      const matched = courses.filter((course) => HDU.courseSearchText(course).includes(lower));
-      for (const group of HDU.groupCourses(matched)) {
-        if (!map.has(group.id)) {
-          map.set(group.id, { id: group.id, name: group.name, items: group.items, lockedItemId: '', optional: false });
-        } else {
-          map.get(group.id).optional = false;
-        }
+    for (const resolution of requiredResolutions()) {
+      if (resolution.unresolved) continue;
+      for (const group of resolution.groups) {
+        mergeGroup({ ...group, lockedItemId: group.lockedItemId || '' }, false);
       }
     }
     return [...map.values()].filter((group) => group.items.length);
@@ -1118,11 +1181,19 @@
   async function estimateCandidates() {
     if (schedulingBusy) return;
     persistState();
+    const unresolved = unresolvedRequiredTokens();
+    if (unresolved.length) {
+      const text = `必选课程未匹配：${unresolved.map((item) => item.token).join('、')}。请用课程搜索选择正确课程号，或检查课程名称。`;
+      state.candidateEstimate = text;
+      els.estimateText.textContent = text;
+      persistState();
+      return;
+    }
     const groups = candidateGroups();
     setSchedulingBusy(true);
     els.estimateText.textContent = '正在估算候选课表数量...';
     try {
-      const estimate = await runSchedulerWorker('estimate', groups, { ...state }, 20000);
+      const estimate = await runSchedulerWorker('estimate', groups, schedulerState(), 20000);
       const text = estimate.capped
         ? (estimate.approximate && estimate.count < estimate.limit ? `估算已快速截断，至少 ${estimate.count} 个候选课表` : `候选数量超过 ${estimate.limit} 个`)
         : `预计 ${estimate.count} 个候选课表`;
@@ -1139,11 +1210,16 @@
   async function generateCandidates() {
     if (schedulingBusy) return;
     persistState();
+    const unresolved = unresolvedRequiredTokens();
+    if (unresolved.length) {
+      els.estimateText.textContent = `必选课程未匹配：${unresolved.map((item) => item.token).join('、')}。请先修正后再生成。`;
+      return;
+    }
     const groups = candidateGroups();
     setSchedulingBusy(true);
     els.estimateText.textContent = '正在检查候选规模...';
     try {
-      const estimate = await runSchedulerWorker('estimate', groups, { ...state }, 501);
+      const estimate = await runSchedulerWorker('estimate', groups, schedulerState(), 501);
       if (estimate.capped || estimate.count > 500) {
         const message = '当前候选课表过多，建议添加更多约束条件。是否仍然继续生成前 500 个候选方案？';
         if (!window.confirm(message)) {
@@ -1152,7 +1228,7 @@
         }
       }
       els.estimateText.textContent = '正在生成候选课表...';
-      const generated = await runSchedulerWorker('generate', groups, { ...state }, 500);
+      const generated = await runSchedulerWorker('generate', groups, schedulerState(), 500);
       solutions = generated.results;
       state.candidateCursor = 0;
       activeSolution = solutions[0] || null;
@@ -1172,7 +1248,7 @@
 
   async function restoreCandidates() {
     if (!state.activeCandidate && !state.candidateCursor) return;
-    const generated = await runSchedulerWorker('generate', candidateGroups(), { ...state }, 500);
+    const generated = await runSchedulerWorker('generate', candidateGroups(), schedulerState(), 500);
     solutions = generated.results;
     const bySignature = solutions.findIndex((solution) => solution.signature === state.activeCandidate);
     const nextIndex = bySignature >= 0 ? bySignature : Math.min(state.candidateCursor || 0, Math.max(0, solutions.length - 1));
