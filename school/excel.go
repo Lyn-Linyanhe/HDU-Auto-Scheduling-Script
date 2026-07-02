@@ -105,7 +105,7 @@ func ReadCourseExcel(name string) (*CoursePayload, error) {
 		return nil, fmt.Errorf("未能从 %s 识别课程信息表", filepath.Base(name))
 	}
 	_ = bestName
-	return &CoursePayload{Items: best}, nil
+	return &CoursePayload{SchemaVersion: CourseSchemaVersion, Items: best}, nil
 }
 
 func findCourseExcel(dir string) (string, error) {

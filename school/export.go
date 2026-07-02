@@ -414,10 +414,11 @@ func (e *exporter) exportCourse(req ExportRequest) (*ExportResult, error) {
 	}
 
 	raw := map[string]any{
-		"items":   payload.Items,
-		"term":    params.XueNian + "-" + strconv.Itoa(mustAtoi(params.XueNian)+1) + "-" + params.XueQi,
-		"source":  "task-course",
-		"version": 1,
+		"schemaVersion": CourseSchemaVersion,
+		"items":         payload.Items,
+		"term":          params.XueNian + "-" + strconv.Itoa(mustAtoi(params.XueNian)+1) + "-" + params.XueQi,
+		"source":        "task-course",
+		"version":       1,
 	}
 	textBytes, _ := json.MarshalIndent(raw, "", "  ")
 	if err := os.WriteFile("course.json", textBytes, 0644); err != nil {
@@ -459,11 +460,12 @@ func (e *exporter) exportPersonalSchedule(req ExportRequest) (*ExportResult, err
 	}
 	items := extractPersonalScheduleItems(raw)
 	payload := map[string]any{
-		"source":     "personal-schedule",
-		"term":       params.XueNian + "-" + strconv.Itoa(mustAtoi(params.XueNian)+1) + "-" + params.XueQi,
-		"exportedAt": time.Now().Format(time.RFC3339),
-		"items":      items,
-		"raw":        raw,
+		"schemaVersion": CourseSchemaVersion,
+		"source":        "personal-schedule",
+		"term":          params.XueNian + "-" + strconv.Itoa(mustAtoi(params.XueNian)+1) + "-" + params.XueQi,
+		"exportedAt":    time.Now().Format(time.RFC3339),
+		"items":         items,
+		"raw":           raw,
 	}
 	textBytes, _ := json.MarshalIndent(payload, "", "  ")
 	if err := os.WriteFile("personal-schedule.json", textBytes, 0644); err != nil {

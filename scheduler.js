@@ -6,6 +6,9 @@
   let activeSolution = null;
   let selectedCourseId = '';
   let modalCourseId = '';
+  let workerJobId = 0;
+  let workerUnavailable = false;
+  let schedulingBusy = false;
 
   const els = {
     subtitle: document.getElementById('subtitle'),
@@ -292,6 +295,60 @@
 
   function signatureForItems(items) {
     return items.map((item) => item.id).sort().join('|');
+  }
+
+  function withSolutionSignatures(generated) {
+    const dismissed = new Set(state.dismissedCandidates || []);
+    const rows = (generated.results || []).map((solution) => ({
+      ...solution,
+      signature: solution.signature || signatureForItems(solution.items || []),
+    })).filter((solution) => !dismissed.has(solution.signature));
+    return { ...generated, results: rows };
+  }
+
+  function runSchedulerSync(type, groups, snapshot, limit) {
+    if (type === 'estimate') return HDU.estimateSolutions(groups, snapshot, limit);
+    if (type === 'generate') return withSolutionSignatures(HDU.generateSolutions(groups, snapshot, limit));
+    throw new Error(`Unknown scheduler job: ${type}`);
+  }
+
+  function runSchedulerWorker(type, groups, snapshot, limit) {
+    if (workerUnavailable || typeof Worker === 'undefined') {
+      return Promise.resolve(runSchedulerSync(type, groups, snapshot, limit));
+    }
+    return new Promise((resolve, reject) => {
+      const jobId = `${Date.now()}-${workerJobId += 1}`;
+      let worker;
+      try {
+        worker = new Worker(new URL('scheduler-worker.js', window.location.href));
+      } catch (error) {
+        workerUnavailable = true;
+        resolve(runSchedulerSync(type, groups, snapshot, limit));
+        return;
+      }
+      const finish = (callback, value) => {
+        worker.terminate();
+        callback(value);
+      };
+      worker.onmessage = (event) => {
+        const message = event.data || {};
+        if (message.id !== jobId) return;
+        if (message.ok) finish(resolve, type === 'generate' ? withSolutionSignatures(message.result) : message.result);
+        else finish(reject, new Error(message.error || 'Scheduler worker failed'));
+      };
+      worker.onerror = (event) => {
+        workerUnavailable = true;
+        finish(reject, new Error(event.message || 'Scheduler worker failed'));
+      };
+      worker.postMessage({ id: jobId, type, groups, state: snapshot, limit });
+    }).catch(() => runSchedulerSync(type, groups, snapshot, limit));
+  }
+
+  function setSchedulingBusy(busy) {
+    schedulingBusy = busy;
+    [els.generate, els.estimate].forEach((button) => {
+      if (button) button.disabled = busy;
+    });
   }
 
   function constraintToken(course) {
@@ -1020,12 +1077,7 @@
   }
 
   function buildSolutions(limit = 500) {
-    const generated = HDU.generateSolutions(candidateGroups(), state, limit);
-    const rows = generated.results.map((solution) => ({
-      ...solution,
-      signature: signatureForItems(solution.items),
-    })).filter((solution) => !(state.dismissedCandidates || []).includes(solution.signature));
-    return { ...generated, results: rows };
+    return withSolutionSignatures(HDU.generateSolutions(candidateGroups(), state, limit));
   }
 
   function candidateGroups() {
@@ -1063,41 +1115,62 @@
     renderResults();
   }
 
-  function estimateCandidates() {
+  async function estimateCandidates() {
+    if (schedulingBusy) return;
     persistState();
-    const estimate = HDU.estimateSolutions(candidateGroups(), state);
-    const text = estimate.capped ? `候选数量超过 ${estimate.limit} 个` : `预计 ${estimate.count} 个候选课表`;
-    state.candidateEstimate = text;
-    els.estimateText.textContent = text;
-    persistState();
-  }
-
-  function generateCandidates() {
-    persistState();
-    const estimate = HDU.estimateSolutions(candidateGroups(), state, 501);
-    if (estimate.capped || estimate.count > 500) {
-      const message = '当前候选课表过多，建议添加更多约束条件。是否仍然继续生成前 500 个候选方案？';
-      if (!window.confirm(message)) {
-        els.estimateText.textContent = '已取消生成。建议添加更多约束条件后再试。';
-        return;
-      }
+    const groups = candidateGroups();
+    setSchedulingBusy(true);
+    els.estimateText.textContent = '正在估算候选课表数量...';
+    try {
+      const estimate = await runSchedulerWorker('estimate', groups, { ...state }, 20000);
+      const text = estimate.capped ? `候选数量超过 ${estimate.limit} 个` : `预计 ${estimate.count} 个候选课表`;
+      state.candidateEstimate = text;
+      els.estimateText.textContent = text;
+      persistState();
+    } catch (error) {
+      els.estimateText.textContent = `估算失败：${error.message || error}`;
+    } finally {
+      setSchedulingBusy(false);
     }
-    const generated = buildSolutions(500);
-    solutions = generated.results;
-    state.candidateCursor = 0;
-    activeSolution = solutions[0] || null;
-    state.activeCandidate = activeSolution ? activeSolution.signature : '';
-    state.candidatePreviewEnabled = false;
-    els.estimateText.textContent = generated.capped
-      ? `已生成前 ${generated.limit} 个较优方案，候选可能更多。`
-      : `已生成 ${solutions.length} 个候选方案。`;
-    persistState();
-    renderAll();
   }
 
-  function restoreCandidates() {
+  async function generateCandidates() {
+    if (schedulingBusy) return;
+    persistState();
+    const groups = candidateGroups();
+    setSchedulingBusy(true);
+    els.estimateText.textContent = '正在检查候选规模...';
+    try {
+      const estimate = await runSchedulerWorker('estimate', groups, { ...state }, 501);
+      if (estimate.capped || estimate.count > 500) {
+        const message = '当前候选课表过多，建议添加更多约束条件。是否仍然继续生成前 500 个候选方案？';
+        if (!window.confirm(message)) {
+          els.estimateText.textContent = '已取消生成。建议添加更多约束条件后再试。';
+          return;
+        }
+      }
+      els.estimateText.textContent = '正在生成候选课表...';
+      const generated = await runSchedulerWorker('generate', groups, { ...state }, 500);
+      solutions = generated.results;
+      state.candidateCursor = 0;
+      activeSolution = solutions[0] || null;
+      state.activeCandidate = activeSolution ? activeSolution.signature : '';
+      state.candidatePreviewEnabled = false;
+      els.estimateText.textContent = generated.capped
+        ? `已生成前 ${generated.limit} 个较优方案，候选可能更多。`
+        : `已生成 ${solutions.length} 个候选方案。`;
+      persistState();
+      renderAll();
+    } catch (error) {
+      els.estimateText.textContent = `生成失败：${error.message || error}`;
+    } finally {
+      setSchedulingBusy(false);
+    }
+  }
+
+  async function restoreCandidates() {
     if (!state.activeCandidate && !state.candidateCursor) return;
-    const generated = buildSolutions(500);
+    const generated = await runSchedulerWorker('generate', candidateGroups(), { ...state }, 500);
     solutions = generated.results;
     const bySignature = solutions.findIndex((solution) => solution.signature === state.activeCandidate);
     const nextIndex = bySignature >= 0 ? bySignature : Math.min(state.candidateCursor || 0, Math.max(0, solutions.length - 1));
@@ -1241,10 +1314,12 @@
   function exportCurrentTimetable() {
     const items = activeItems();
     const payload = {
+      schemaVersion: HDU.COURSE_SCHEMA_VERSION,
       exportedAt: new Date().toISOString(),
       source: state.candidatePreviewEnabled ? 'candidate' : 'current',
       items: items.map((item) => ({
         ...(item.raw || {}),
+        schemaVersion: HDU.COURSE_SCHEMA_VERSION,
         id: item.id,
         sectionId: item.id,
         jxb_id: item.raw?.jxb_id || item.id,
@@ -1371,7 +1446,7 @@
     courses = HDU.normalizeCourseData(data);
     await autoImportPersonalSchedule();
     rebuildSelection();
-    restoreCandidates();
+    await restoreCandidates();
     els.subtitle.textContent = `当前加载 ${courses.length} 个教学班，${HDU.groupCourses(courses).length} 个课组`;
     els.estimateText.textContent = state.candidateEstimate || '调整约束后，可先估算候选数量。';
     renderAll();

@@ -42,6 +42,7 @@ if ($SkipBuild) {
 
 Copy-Item -LiteralPath (Join-Path $Root "VERSION") -Destination (Join-Path $PackageDir "VERSION.txt")
 Copy-Item -LiteralPath (Join-Path $Root "docs\USER_GUIDE.md") -Destination (Join-Path $PackageDir "USER_GUIDE.md")
+Copy-Item -LiteralPath (Join-Path $Root "docs\COURSE_SCHEMA.md") -Destination (Join-Path $PackageDir "COURSE_SCHEMA.md")
 Copy-Item -LiteralPath (Join-Path $Root "README.md") -Destination (Join-Path $PackageDir "README.md")
 Copy-Item -LiteralPath (Join-Path $Root "testdata\course.sample.json") -Destination (Join-Path $SamplesDir "course.sample.json")
 Copy-Item -LiteralPath (Join-Path $Root "testdata\personal-schedule.sample.json") -Destination (Join-Path $SamplesDir "personal-schedule.sample.json")
@@ -55,6 +56,7 @@ $Manifest = [ordered]@{
     "hdu-course-exporter.exe",
     "VERSION.txt",
     "USER_GUIDE.md",
+    "COURSE_SCHEMA.md",
     "README.md",
     "samples/course.sample.json",
     "samples/personal-schedule.sample.json"

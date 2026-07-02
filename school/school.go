@@ -37,8 +37,11 @@ type ExportRequest struct {
 }
 
 type CoursePayload struct {
-	Items []map[string]any `json:"items"`
+	SchemaVersion int              `json:"schemaVersion,omitempty"`
+	Items         []map[string]any `json:"items"`
 }
+
+const CourseSchemaVersion = 1
 
 type Service struct {
 	mu      sync.RWMutex
@@ -155,12 +158,15 @@ func ValidateExportRequest(req ExportRequest) error {
 func DecodeCoursePayload(data []byte) (*CoursePayload, error) {
 	var payload CoursePayload
 	if err := json.Unmarshal(data, &payload); err == nil && len(payload.Items) > 0 {
+		if payload.SchemaVersion == 0 {
+			payload.SchemaVersion = CourseSchemaVersion
+		}
 		return &payload, nil
 	}
 
 	var raw []map[string]any
 	if err := json.Unmarshal(data, &raw); err == nil && len(raw) > 0 {
-		return &CoursePayload{Items: raw}, nil
+		return &CoursePayload{SchemaVersion: CourseSchemaVersion, Items: raw}, nil
 	}
 
 	return nil, errors.New("course.json 解析失败或为空")

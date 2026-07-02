@@ -1,5 +1,6 @@
 (() => {
   const STORAGE_KEY = 'hdu-scheduler-state-v3';
+  const COURSE_SCHEMA_VERSION = 1;
   const COURSE_API = '/api/course';
   const STATUS_API = '/api/status';
   const PERSONAL_SCHEDULE_API = '/api/personal-schedule';
@@ -223,6 +224,7 @@
       const timeText = firstText(item.sksj, item.time, item.schedule);
       const location = firstText(item.jxdd, item.location, item.cdlbmc, item.cdejlbmc);
       return {
+        schemaVersion: COURSE_SCHEMA_VERSION,
         id,
         groupId,
         displayCode,
@@ -233,7 +235,7 @@
         kind: firstText(item.kklxmc, item.kklx, item.courseType),
         location,
         status: firstText(item.kkztmc, item.xkbjmc),
-        credits: parseCredits(item.xf),
+        credits: parseCredits(firstText(item.xf, item.credits, item.credit)),
         capacity: Number(item.jxbrl || 0),
         enrolled: Number(item.jxbrs || item.xkrs || 0),
         selected: Number(item.xkrs || 0),
@@ -536,7 +538,8 @@
     return [course.courseName, course.sectionName].filter(Boolean).join(' / ');
   }
 
-  window.HDU = {
+  globalThis.HDU = {
+    COURSE_SCHEMA_VERSION,
     DAY_LABELS,
     PERIOD_TIMES,
     COURSE_API,

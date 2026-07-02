@@ -12,7 +12,8 @@
 - 支持手动导入个人/班级课表作为已选底板。
 - 支持课程搜索、加入、移除、锁定、冲突提示和单双周展示。
 - 支持课程级、时间级、方案级约束。
-- 支持候选课表估算、生成、翻页预览、收藏、删除和导入显示。
+- 支持候选课表估算、生成、翻页预览、收藏、删除和导入显示；候选生成默认放到 Web Worker 中执行，减少页面卡顿。
+- 课程数据统一归一化为 schema v1，说明见 [docs/COURSE_SCHEMA.md](docs/COURSE_SCHEMA.md)。
 - 支持导出当前课表 JSON 和课表截图。
 
 ## 本地运行
@@ -46,7 +47,7 @@ go build -buildvcs=false -o dist/hdu-course-exporter.exe ./cmd/course-exporter
 powershell -ExecutionPolicy Bypass -File scripts/build-release.ps1
 ```
 
-脚本会生成 `release/HDU-Auto-Scheduling-Script-v版本号/` 和对应 zip，包含两个 exe、使用说明、版本文件、manifest 和测试样例数据。
+脚本会生成 `release/HDU-Auto-Scheduling-Script-v版本号/` 和对应 zip，包含两个 exe、使用说明、课程 schema、版本文件、manifest 和测试样例数据。
 
 ## 测试数据
 
@@ -56,6 +57,12 @@ powershell -ExecutionPolicy Bypass -File scripts/build-release.ps1
 - `personal-schedule.sample.json`
 
 说明见 [docs/TEST_DATA.md](docs/TEST_DATA.md)。
+
+排课 Worker 冒烟测试：
+
+```bash
+node scripts/scheduler-worker-smoke.js
+```
 
 ## 数据文件
 

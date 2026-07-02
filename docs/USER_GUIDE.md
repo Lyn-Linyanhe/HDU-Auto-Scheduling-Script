@@ -6,6 +6,7 @@
 - `hdu-offline-scheduler.exe`：离线模拟排课。
 - `samples/course.sample.json`：测试用全校课程数据。
 - `samples/personal-schedule.sample.json`：测试用个人课表底板。
+- `COURSE_SCHEMA.md`：课程 JSON 的统一字段说明。
 
 ## 推荐使用流程
 
@@ -53,3 +54,7 @@
 ### 生成候选方案太多
 
 增加约束条件，例如必选课程、教师偏好、最多早八天数、最多晚课天数、最少全天无课天数。
+
+### 生成候选方案时页面是否会卡住
+
+新版会优先把候选估算和生成放到浏览器 Web Worker 中运行。Worker 不可用时会自动退回同步生成，结果一致，只是页面可能短暂变慢。
