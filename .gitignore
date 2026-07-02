@@ -1,4 +1,5 @@
 /dist/
+/release/
 /course.json
 /personal-schedule.json
 *.xlsx

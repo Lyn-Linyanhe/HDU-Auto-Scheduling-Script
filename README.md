@@ -19,21 +19,44 @@
 
 运行离线排课助手：
 
-```bash   ”“bash
-go run .   
+```bash
+go run .
 ```
 
 运行课程数据导出器：
 
-```bash   ”“bash
+```bash
 go run ./cmd/course-exporter
 ```
 
 两个程序都会自动打开本地浏览器页面。
 
-## 打包
+## 打包 exe
 
-```bash   ”“bash   ”“bash
-go build -buildvcs=false -o dist/hdu-offline-scheduler.exe .运行build -buildvcs=false -o dist/hdu-offline-scheduler.exe。运行build -buildvcs=false -o dist/hdu-offline-scheduler.exe。运行build -buildvcs=false -o dist/hdu-offline-scheduler.exe。
-go build -buildvcs=false -o dist/hdu-course-exporter.exe ./cmd/course-exporter执行命令build -buildvcs=false -o dist/ du-course-export .exe ./cmd/course-export
+直接构建两个 exe：
+
+```bash
+go build -buildvcs=false -o dist/hdu-offline-scheduler.exe .
+go build -buildvcs=false -o dist/hdu-course-exporter.exe ./cmd/course-exporter
 ```
+
+生成可分发 release 包：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/build-release.ps1
+```
+
+脚本会生成 `release/HDU-Auto-Scheduling-Script-v版本号/` 和对应 zip，包含两个 exe、使用说明、版本文件、manifest 和测试样例数据。
+
+## 测试数据
+
+固定测试数据位于 `testdata/`：
+
+- `course.sample.json`
+- `personal-schedule.sample.json`
+
+说明见 [docs/TEST_DATA.md](docs/TEST_DATA.md)。
+
+## 数据文件
+
+`course.json`、`personal-schedule.json`、Excel 文件、`dist/` 和 `release/` 下的 exe/数据默认不提交到 Git。需要分发时建议使用 release 脚本生成 zip。
