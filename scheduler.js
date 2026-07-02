@@ -1314,35 +1314,155 @@
   function exportTimetableScreenshot() {
     const target = els.timetable;
     if (!target) return;
+    const width = Math.ceil(Math.max(target.scrollWidth, target.getBoundingClientRect().width));
+    const height = Math.ceil(Math.max(target.scrollHeight, target.getBoundingClientRect().height));
+    if (!width || !height) {
+      window.alert('课表区域为空，暂时无法导出截图。');
+      return;
+    }
     const canvas = document.createElement('canvas');
     const scale = 2;
-    canvas.width = Math.ceil(target.scrollWidth * scale);
-    canvas.height = Math.ceil(target.scrollHeight * scale);
+    canvas.width = width * scale;
+    canvas.height = height * scale;
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
     ctx.fillStyle = '#ffffff';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
     ctx.scale(scale, scale);
-    const data = new XMLSerializer().serializeToString(target);
-    const svg = `
-      <svg xmlns="http://www.w3.org/2000/svg" width="${target.scrollWidth}" height="${target.scrollHeight}">
-        <foreignObject width="100%" height="100%">${data}</foreignObject>
-      </svg>
-    `;
-    const img = new Image();
-    const blob = new Blob([svg], { type: 'image/svg+xml;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    img.onload = () => {
-      ctx.drawImage(img, 0, 0, target.scrollWidth, target.scrollHeight);
-      URL.revokeObjectURL(url);
-      const link = document.createElement('a');
-      link.href = canvas.toDataURL('image/png');
-      link.download = `hdu-timetable-${new Date().toISOString().slice(0, 19).replace(/[T:]/g, '-')}.png`;
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
+    paintTimetableToCanvas(ctx, target);
+    downloadCanvas(canvas, `hdu-timetable-${new Date().toISOString().slice(0, 19).replace(/[T:]/g, '-')}.png`);
+  }
+
+  function paintTimetableToCanvas(ctx, target) {
+    const rootRect = target.getBoundingClientRect();
+    for (const cell of target.children) {
+      drawTimetableCell(ctx, cell, rootRect);
+    }
+  }
+
+  function relativeRect(element, rootRect) {
+    const rect = element.getBoundingClientRect();
+    return {
+      x: rect.left - rootRect.left,
+      y: rect.top - rootRect.top,
+      width: rect.width,
+      height: rect.height,
     };
-    img.src = url;
+  }
+
+  function drawBox(ctx, rect, style, radius = 0) {
+    const background = style.backgroundColor && style.backgroundColor !== 'rgba(0, 0, 0, 0)' ? style.backgroundColor : '#ffffff';
+    const border = style.borderTopColor || '#cfdae8';
+    ctx.save();
+    ctx.beginPath();
+    if (ctx.roundRect && radius) ctx.roundRect(rect.x, rect.y, rect.width, rect.height, radius);
+    else ctx.rect(rect.x, rect.y, rect.width, rect.height);
+    ctx.fillStyle = background;
+    ctx.fill();
+    ctx.strokeStyle = border;
+    ctx.lineWidth = 1;
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  function fontFromStyle(style, fallbackSize = 12) {
+    const weight = style.fontWeight || '400';
+    const size = style.fontSize || `${fallbackSize}px`;
+    const family = style.fontFamily || 'Arial, sans-serif';
+    return `${weight} ${size} ${family}`;
+  }
+
+  function drawEllipsisText(ctx, text, x, y, maxWidth, style, fallbackSize = 12) {
+    const value = String(text || '').trim();
+    if (!value || maxWidth <= 0) return;
+    ctx.save();
+    ctx.font = fontFromStyle(style, fallbackSize);
+    ctx.fillStyle = style.color || '#0b1f3a';
+    ctx.textBaseline = 'top';
+    let output = value;
+    while (output.length > 1 && ctx.measureText(output).width > maxWidth) {
+      output = `${output.slice(0, -2)}…`;
+    }
+    ctx.fillText(output, x, y);
+    ctx.restore();
+  }
+
+  function drawPillText(ctx, element, rootRect) {
+    if (!element) return;
+    const rect = relativeRect(element, rootRect);
+    const style = window.getComputedStyle(element);
+    drawBox(ctx, rect, style, Math.min(rect.height / 2, 10));
+    ctx.save();
+    ctx.font = fontFromStyle(style, 10);
+    ctx.fillStyle = style.color || '#1e3a8a';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(element.textContent.trim(), rect.x + rect.width / 2, rect.y + rect.height / 2);
+    ctx.restore();
+  }
+
+  function drawTimetableCell(ctx, cell, rootRect) {
+    const rect = relativeRect(cell, rootRect);
+    const style = window.getComputedStyle(cell);
+    drawBox(ctx, rect, style, 0);
+    if (cell.classList.contains('day-cell')) {
+      ctx.save();
+      ctx.font = fontFromStyle(style, 18);
+      ctx.fillStyle = style.color || '#0b1f3a';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'top';
+      ctx.fillText(cell.textContent.trim(), rect.x + rect.width / 2, rect.y + 13);
+      ctx.restore();
+      return;
+    }
+    if (cell.classList.contains('time-cell') && !cell.classList.contains('header-spacer')) {
+      const indexEl = cell.querySelector('.period-index');
+      const timeEl = cell.querySelector('.period-time');
+      drawEllipsisText(ctx, indexEl?.textContent, rect.x + 10, rect.y + 10, rect.width - 20, window.getComputedStyle(indexEl || cell), 16);
+      const timeStyle = window.getComputedStyle(timeEl || cell);
+      const lines = String(timeEl?.textContent || '').trim().match(/\d{2}:\d{2}/g) || [];
+      lines.forEach((line, index) => drawEllipsisText(ctx, line, rect.x + 10, rect.y + 34 + index * 16, rect.width - 20, timeStyle, 13));
+      return;
+    }
+    if (cell.classList.contains('slot')) {
+      for (const card of cell.querySelectorAll('.slot-item')) {
+        drawCourseCard(ctx, card, rootRect);
+      }
+    }
+  }
+
+  function drawCourseCard(ctx, card, rootRect) {
+    const rect = relativeRect(card, rootRect);
+    const style = window.getComputedStyle(card);
+    drawBox(ctx, rect, style, 8);
+    const paddingX = 9;
+    const courseName = card.querySelector('.course-name');
+    const sectionName = card.querySelector('.section-name');
+    const detail = card.querySelector('.course-detail');
+    drawEllipsisText(ctx, courseName?.textContent, rect.x + paddingX, rect.y + 8, rect.width - paddingX * 2, window.getComputedStyle(courseName || card), 13);
+    drawEllipsisText(ctx, sectionName?.textContent, rect.x + paddingX, rect.y + 29, rect.width - paddingX * 2, window.getComputedStyle(sectionName || card), 12);
+    drawEllipsisText(ctx, detail?.textContent, rect.x + paddingX, rect.y + 47, rect.width - paddingX * 2, window.getComputedStyle(detail || card), 10);
+    drawPillText(ctx, card.querySelector('.week-badge'), rootRect);
+    drawPillText(ctx, card.querySelector('.lock-badge'), rootRect);
+  }
+
+  function downloadCanvas(canvas, filename) {
+    const dataURL = canvas.toDataURL('image/png');
+    const [header, body] = dataURL.split(',');
+    const mime = header.match(/data:(.*?);/)?.[1] || 'image/png';
+    const binary = atob(body);
+    const bytes = new Uint8Array(binary.length);
+    for (let index = 0; index < binary.length; index += 1) {
+      bytes[index] = binary.charCodeAt(index);
+    }
+    const url = URL.createObjectURL(new Blob([bytes], { type: mime }));
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
 
   function matchImportedCourse(imported) {

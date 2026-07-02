@@ -64,6 +64,14 @@ powershell -ExecutionPolicy Bypass -File scripts/build-release.ps1
 node scripts/scheduler-worker-smoke.js
 ```
 
+课表截图导出冒烟测试需要先启动排课助手服务：
+
+```bash
+set HDU_NO_BROWSER=1
+go run .
+node scripts/screenshot-smoke.js
+```
+
 ## 数据文件
 
 `course.json`、`personal-schedule.json`、Excel 文件、`dist/` 和 `release/` 下的 exe/数据默认不提交到 Git。需要分发时建议使用 release 脚本生成 zip。
