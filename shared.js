@@ -462,34 +462,71 @@
     return group.optional ? [null, ...group.items] : group.items;
   }
 
+  function optionCredits(option) {
+    return option ? Number(option.credits || 0) : 0;
+  }
+
+  function boundedOptionProduct(ordered, cap) {
+    let count = 1;
+    for (const group of ordered) {
+      const optionCount = Math.max(0, optionsForGroup(group).length);
+      if (!optionCount) return { count: 0, capped: false };
+      if (count > cap / optionCount) return { count: cap, capped: true };
+      count *= optionCount;
+    }
+    return { count, capped: false };
+  }
+
+  function prepareSearch(ordered) {
+    const optionsList = ordered.map((group) => optionsForGroup(group));
+    const suffixMaxCredits = Array(optionsList.length + 1).fill(0);
+    for (let index = optionsList.length - 1; index >= 0; index -= 1) {
+      const maxCredit = optionsList[index].reduce((max, option) => Math.max(max, optionCredits(option)), 0);
+      suffixMaxCredits[index] = suffixMaxCredits[index + 1] + maxCredit;
+    }
+    return { optionsList, suffixMaxCredits };
+  }
+
   function generateSolutions(groups, state, limit = 500) {
     const constraints = constraintsFromState(state);
     const ordered = orderedGroups(groups);
+    const { optionsList, suffixMaxCredits } = prepareSearch(ordered);
     const results = [];
     const picked = [];
     let capped = false;
+    let visits = 0;
+    const visitLimit = Math.max(100000, limit * 1200);
 
-    const walk = (index) => {
+    const walk = (index, credits) => {
       if (results.length >= limit) {
         capped = true;
         return;
       }
+      visits += 1;
+      if (visits >= visitLimit) {
+        capped = true;
+        return;
+      }
+      if (credits > constraints.maxCredit) return;
+      if (credits + suffixMaxCredits[index] < constraints.minCredit) return;
       if (index >= ordered.length) {
         const result = evaluateSolution(picked, constraints);
         if (result) results.push(result);
         return;
       }
-      const group = ordered[index];
-      for (const option of optionsForGroup(group)) {
+      for (const option of optionsList[index]) {
         if (option && lockedConstraintConflict(picked, option)) continue;
+        const nextCredits = credits + optionCredits(option);
+        if (nextCredits > constraints.maxCredit) continue;
+        if (nextCredits + suffixMaxCredits[index + 1] < constraints.minCredit) continue;
         if (option) picked.push(option);
-        walk(index + 1);
+        walk(index + 1, nextCredits);
         if (option) picked.pop();
         if (capped) return;
       }
     };
 
-    walk(0);
+    walk(0, 0);
     results.sort((a, b) => b.metrics.freeDays - a.metrics.freeDays || a.score - b.score || b.credits - a.credits);
     return { results, capped, limit };
   }
@@ -497,31 +534,48 @@
   function estimateSolutions(groups, state, limit = 20000) {
     const constraints = constraintsFromState(state);
     const ordered = orderedGroups(groups);
+    const exactProductLimit = Math.max(limit + 1, 100000);
+    const upperBound = boundedOptionProduct(ordered, exactProductLimit);
+    if (upperBound.capped) {
+      return { count: limit, capped: true, limit, approximate: true };
+    }
+    const { optionsList, suffixMaxCredits } = prepareSearch(ordered);
     const picked = [];
     let count = 0;
     let capped = false;
+    let visits = 0;
+    const visitLimit = exactProductLimit;
 
-    const walk = (index) => {
+    const walk = (index, credits) => {
       if (count >= limit) {
         capped = true;
         return;
       }
+      visits += 1;
+      if (visits >= visitLimit) {
+        capped = true;
+        return;
+      }
+      if (credits > constraints.maxCredit) return;
+      if (credits + suffixMaxCredits[index] < constraints.minCredit) return;
       if (index >= ordered.length) {
         if (evaluateSolution(picked, constraints)) count += 1;
         return;
       }
-      const group = ordered[index];
-      for (const option of optionsForGroup(group)) {
+      for (const option of optionsList[index]) {
         if (option && lockedConstraintConflict(picked, option)) continue;
+        const nextCredits = credits + optionCredits(option);
+        if (nextCredits > constraints.maxCredit) continue;
+        if (nextCredits + suffixMaxCredits[index + 1] < constraints.minCredit) continue;
         if (option) picked.push(option);
-        walk(index + 1);
+        walk(index + 1, nextCredits);
         if (option) picked.pop();
         if (capped) return;
       }
     };
 
-    walk(0);
-    return { count, capped, limit };
+    walk(0, 0);
+    return { count, capped, limit, approximate: capped && count < limit };
   }
 
   function groupFromSelection(selection, courses) {

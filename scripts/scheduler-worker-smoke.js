@@ -70,4 +70,43 @@ if (generated.result.results.some((solution) => !solution.signature)) {
   throw new Error('Worker generated a solution without a signature.');
 }
 
+const optionalCourse = courses[0];
+const optionalOnlyGroups = [{
+  id: optionalCourse.groupId,
+  name: optionalCourse.courseName,
+  items: [optionalCourse],
+  lockedItemId: '',
+  optional: true,
+}];
+const optionalGenerated = context.HDU.generateSolutions(optionalOnlyGroups, state, 10);
+if (!optionalGenerated.results.some((solution) => solution.items.length === 0)) {
+  throw new Error('Unlocked selected course should be removable in generated schedules.');
+}
+if (!optionalGenerated.results.some((solution) => solution.items.some((item) => item.id === optionalCourse.id))) {
+  throw new Error('Unlocked selected course should still be allowed as an optional choice.');
+}
+
+const lockedGenerated = context.HDU.generateSolutions([{
+  ...optionalOnlyGroups[0],
+  lockedItemId: optionalCourse.id,
+  optional: false,
+}], state, 10);
+if (!lockedGenerated.results.length || lockedGenerated.results.some((solution) => !solution.items.some((item) => item.id === optionalCourse.id))) {
+  throw new Error('Locked selected course must appear in every generated schedule.');
+}
+
+const hugeGroups = Array.from({ length: 80 }, (_, index) => ({
+  id: `huge-${index}`,
+  name: `huge-${index}`,
+  items: [{ ...optionalCourse, id: `huge-course-${index}`, groupId: `huge-${index}` }],
+  lockedItemId: '',
+  optional: true,
+}));
+const startedAt = Date.now();
+const hugeEstimate = context.HDU.estimateSolutions(hugeGroups, state, 50);
+const elapsed = Date.now() - startedAt;
+if (!hugeEstimate.capped || elapsed > 500) {
+  throw new Error(`Huge estimate should cap quickly, got ${JSON.stringify(hugeEstimate)} in ${elapsed}ms.`);
+}
+
 console.log(`Worker smoke test passed: ${estimate.result.count} estimated, ${generated.result.results.length} generated.`);

@@ -1123,7 +1123,9 @@
     els.estimateText.textContent = '正在估算候选课表数量...';
     try {
       const estimate = await runSchedulerWorker('estimate', groups, { ...state }, 20000);
-      const text = estimate.capped ? `候选数量超过 ${estimate.limit} 个` : `预计 ${estimate.count} 个候选课表`;
+      const text = estimate.capped
+        ? (estimate.approximate && estimate.count < estimate.limit ? `估算已快速截断，至少 ${estimate.count} 个候选课表` : `候选数量超过 ${estimate.limit} 个`)
+        : `预计 ${estimate.count} 个候选课表`;
       state.candidateEstimate = text;
       els.estimateText.textContent = text;
       persistState();
@@ -1155,9 +1157,9 @@
       state.candidateCursor = 0;
       activeSolution = solutions[0] || null;
       state.activeCandidate = activeSolution ? activeSolution.signature : '';
-      state.candidatePreviewEnabled = false;
+      state.candidatePreviewEnabled = Boolean(activeSolution);
       els.estimateText.textContent = generated.capped
-        ? `已生成前 ${generated.limit} 个较优方案，候选可能更多。`
+        ? `已生成 ${solutions.length} 个较优方案，候选可能更多。`
         : `已生成 ${solutions.length} 个候选方案。`;
       persistState();
       renderAll();
