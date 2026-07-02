@@ -87,6 +87,13 @@ function validatePayload(payload) {
   return '';
 }
 
+function enterSchedulerSoon() {
+  if (window.location.port && window.location.port !== '6789') return;
+  window.setTimeout(() => {
+    window.location.replace('/scheduler.html?v=v5');
+  }, 900);
+}
+
 function startPolling() {
   stopPolling();
   polling = window.setInterval(refreshStatus, 1200);
@@ -137,6 +144,7 @@ els.form.addEventListener('submit', async (event) => {
         ? `个人课表 ${result.personalCount || 0} 门。`
         : `个人课表未导出：${result.personalExportError || '未知原因'}。`;
       setMessage(`导出完成：全校教学班 ${result.count || 0} 个，${personalText}`, result.personalExported ? 'success' : '');
+      if (result.personalExported) enterSchedulerSoon();
     } else {
       setMessage(result.error || '导出失败。', 'error');
     }

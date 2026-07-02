@@ -31,13 +31,11 @@ New-Item -ItemType Directory -Path $SamplesDir | Out-Null
 
 if (-not $SkipBuild) {
   go test -buildvcs=false ./...
-  go build -buildvcs=false -ldflags "-s -w" -o (Join-Path $PackageDir "hdu-offline-scheduler.exe") .
-  go build -buildvcs=false -ldflags "-s -w" -o (Join-Path $PackageDir "hdu-course-exporter.exe") ./cmd/course-exporter
+  go build -buildvcs=false -ldflags "-s -w" -o (Join-Path $PackageDir "HDU-Auto-Scheduling-Script.exe") .
 }
 
 if ($SkipBuild) {
-  Copy-Item -LiteralPath (Join-Path $Root "dist\hdu-offline-scheduler.exe") -Destination (Join-Path $PackageDir "hdu-offline-scheduler.exe")
-  Copy-Item -LiteralPath (Join-Path $Root "dist\hdu-course-exporter.exe") -Destination (Join-Path $PackageDir "hdu-course-exporter.exe")
+  Copy-Item -LiteralPath (Join-Path $Root "dist\HDU-Auto-Scheduling-Script.exe") -Destination (Join-Path $PackageDir "HDU-Auto-Scheduling-Script.exe")
 }
 
 Copy-Item -LiteralPath (Join-Path $Root "VERSION") -Destination (Join-Path $PackageDir "VERSION.txt")
@@ -52,8 +50,7 @@ $Manifest = [ordered]@{
   version = $Version
   builtAt = (Get-Date).ToString("s")
   files = @(
-    "hdu-offline-scheduler.exe",
-    "hdu-course-exporter.exe",
+    "HDU-Auto-Scheduling-Script.exe",
     "VERSION.txt",
     "USER_GUIDE.md",
     "COURSE_SCHEMA.md",

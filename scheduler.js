@@ -309,12 +309,13 @@
   function runSchedulerSync(type, groups, snapshot, limit) {
     if (type === 'estimate') return HDU.estimateSolutions(groups, snapshot, limit);
     if (type === 'generate') return withSolutionSignatures(HDU.generateSolutions(groups, snapshot, limit));
+    if (type === 'diagnose') return HDU.diagnoseNoSolutions(groups, snapshot, limit || {});
     throw new Error(`Unknown scheduler job: ${type}`);
   }
 
-  function runSchedulerWorker(type, groups, snapshot, limit) {
+  function runSchedulerWorker(type, groups, snapshot, limit, context = {}) {
     if (workerUnavailable || typeof Worker === 'undefined') {
-      return Promise.resolve(runSchedulerSync(type, groups, snapshot, limit));
+      return Promise.resolve(runSchedulerSync(type, groups, snapshot, type === 'diagnose' ? context : limit));
     }
     return new Promise((resolve, reject) => {
       const jobId = `${Date.now()}-${workerJobId += 1}`;
@@ -340,8 +341,8 @@
         workerUnavailable = true;
         finish(reject, new Error(event.message || 'Scheduler worker failed'));
       };
-      worker.postMessage({ id: jobId, type, groups, state: snapshot, limit });
-    }).catch(() => runSchedulerSync(type, groups, snapshot, limit));
+      worker.postMessage({ id: jobId, type, groups, state: snapshot, limit, context });
+    }).catch(() => runSchedulerSync(type, groups, snapshot, type === 'diagnose' ? context : limit));
   }
 
   function setSchedulingBusy(busy) {
@@ -674,6 +675,76 @@
   function withdrawalCount(items) {
     const shown = new Set(items.map((item) => item.id));
     return (state.baseCourseIds || []).filter((id) => !shown.has(id)).length;
+  }
+
+  function solutionExplanation(solution) {
+    if (!solution) return [];
+    const items = solution.items || [];
+    const metrics = solution.metrics || HDU.countMetrics(items);
+    const reasons = [
+      `排序优先看全天无课天数，本方案有 ${metrics.freeDays} 天；代价分越低越好，当前 ${Number(solution.score || 0).toFixed(1)}。`,
+      `学分 ${formatCredit(solution.credits)}，需退选底板课程 ${withdrawalCount(items)} 门。`,
+      `时间分布：早八 ${metrics.earlyDays} 天，午间压缩 ${metrics.lunchDays} 天，晚课 ${metrics.lateDays} 天。`,
+    ];
+
+    const preferred = HDU.parseList(els.preferredTeachers.value).map((item) => item.toLowerCase());
+    const preferredHits = [];
+    if (preferred.length) {
+      for (const item of items) {
+        const teacher = (item.teacher || '').toLowerCase();
+        if (preferred.some((good) => good && teacher.includes(good))) {
+          preferredHits.push(`${item.courseName}/${item.teacher || '未填写教师'}`);
+        }
+      }
+      if (preferredHits.length) reasons.push(`命中偏好教师：${[...new Set(preferredHits)].slice(0, 4).join('、')}。`);
+    }
+
+    const pairHits = HDU.parsePairRules(els.pairRules.value).filter((rule) => {
+      const left = rule.from.toLowerCase();
+      const right = rule.to.toLowerCase();
+      return items.some((item) => HDU.courseSearchText(item).includes(left))
+        && items.some((item) => HDU.courseSearchText(item).includes(right));
+    });
+    if (pairHits.length) {
+      reasons.push(`满足强制一起：${pairHits.slice(0, 4).map((rule) => `${rule.from} -> ${rule.to}`).join('；')}。`);
+    }
+
+    const sameTeacherHits = HDU.parsePairRules(els.sameTeacherRules.value).filter((rule) => {
+      const left = items.filter((item) => HDU.courseSearchText(item).includes(rule.from.toLowerCase()));
+      const right = items.filter((item) => HDU.courseSearchText(item).includes(rule.to.toLowerCase()));
+      if (!left.length || !right.length) return false;
+      const leftTeachers = new Set(left.flatMap((item) => HDU.splitTeachers(item.teacher)));
+      return right.some((item) => HDU.splitTeachers(item.teacher).some((teacher) => leftTeachers.has(teacher)));
+    });
+    if (sameTeacherHits.length) {
+      reasons.push(`满足教师一致：${sameTeacherHits.slice(0, 4).map((rule) => `${rule.from} = ${rule.to}`).join('；')}。`);
+    }
+
+    return reasons;
+  }
+
+  function renderSolutionDetails(solution) {
+    const reasons = solutionExplanation(solution);
+    if (!reasons.length) return '';
+    return `
+      <div class="solution-explain">
+        ${reasons.map((reason) => `<div>${escapeHtml(reason)}</div>`).join('')}
+      </div>
+    `;
+  }
+
+  function renderDiagnostics(reasons) {
+    const rows = Array.isArray(reasons) ? reasons : [];
+    if (!rows.length) {
+      els.resultList.innerHTML = '<div class="empty-state">没有找到候选方案，但暂时无法判断具体原因。建议先减少约束条件后重试。</div>';
+      return;
+    }
+    els.resultList.innerHTML = `
+      <div class="empty-state diagnostic-state">
+        <strong>没有候选方案，可能原因如下：</strong>
+        ${rows.map((reason) => `<div class="diagnostic-item">${escapeHtml(reason.text || reason)}</div>`).join('')}
+      </div>
+    `;
   }
 
   function renderSummary() {
@@ -1103,7 +1174,7 @@
     els.resultList.innerHTML = `
       <article class="result-card active">
         <h4>方案 ${index + 1}${favorite ? ' · 已收藏' : ''}</h4>
-        <div class="meta">代价分 ${solution.score.toFixed(1)} · ${formatCredit(solution.credits)} 学分 · 需退课 ${withdrawalCount(solution.items)}</div>
+        <div class="meta">代价分 ${solution.score.toFixed(1)}（越低越好） · ${formatCredit(solution.credits)} 学分 · 需退课 ${withdrawalCount(solution.items)}</div>
         <div class="result-stats">
           <span class="stat">早八 ${solution.metrics.earlyDays}</span>
           <span class="stat">午间 ${solution.metrics.lunchDays}</span>
@@ -1115,6 +1186,7 @@
             <span>${escapeHtml(item.courseName)} / ${escapeHtml(item.sectionName)}</span>
           `).join('')}
         </div>
+        ${renderSolutionDetails(solution)}
       </article>
     `;
   }
@@ -1199,6 +1271,12 @@
         : `预计 ${estimate.count} 个候选课表`;
       state.candidateEstimate = text;
       els.estimateText.textContent = text;
+      if (!estimate.capped && estimate.count === 0) {
+        const reasons = await runSchedulerWorker('diagnose', groups, schedulerState(), 0, {
+          unresolvedRequired: unresolved.map((item) => item.token),
+        });
+        renderDiagnostics(reasons);
+      }
       persistState();
     } catch (error) {
       els.estimateText.textContent = `估算失败：${error.message || error}`;
@@ -1239,6 +1317,12 @@
         : `已生成 ${solutions.length} 个候选方案。`;
       persistState();
       renderAll();
+      if (!solutions.length) {
+        const reasons = await runSchedulerWorker('diagnose', groups, schedulerState(), 0, {
+          unresolvedRequired: unresolved.map((item) => item.token),
+        });
+        renderDiagnostics(reasons);
+      }
     } catch (error) {
       els.estimateText.textContent = `生成失败：${error.message || error}`;
     } finally {
@@ -1283,7 +1367,7 @@
     els.resultList.innerHTML = list.map((solution, index) => `
       <article class="result-card ${solution.signature === state.activeCandidate ? 'active' : ''}">
         <h4>收藏方案 ${index + 1}</h4>
-        <div class="meta">代价分 ${solution.score.toFixed(1)} · ${formatCredit(solution.credits)} 学分 · 需退课 ${withdrawalCount(solution.items)}</div>
+        <div class="meta">代价分 ${solution.score.toFixed(1)}（越低越好） · ${formatCredit(solution.credits)} 学分 · 需退课 ${withdrawalCount(solution.items)}</div>
         <div class="result-stats">
           <span class="stat">早八 ${solution.metrics.earlyDays}</span>
           <span class="stat">午间 ${solution.metrics.lunchDays}</span>
@@ -1293,6 +1377,7 @@
         <div class="candidate-course-list">
           ${solution.items.map((item) => `<span>${escapeHtml(item.courseName)} / ${escapeHtml(item.sectionName)}</span>`).join('')}
         </div>
+        ${renderSolutionDetails(solution)}
       </article>
     `).join('');
   }

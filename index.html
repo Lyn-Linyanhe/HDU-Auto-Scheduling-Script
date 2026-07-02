@@ -3,13 +3,13 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>HDU 排课助手</title>
-  <link rel="stylesheet" href="/styles.css?v=ui2" />
+  <title>HDU 课表自动化编排助手</title>
+  <link rel="stylesheet" href="/styles.css?v=v5" />
 </head>
 <body class="booting">
   <main class="boot-screen">
     <div class="boot-card">
-      <div class="eyebrow">离线排课助手</div>
+      <div class="eyebrow">本地一键启动</div>
       <h1>正在检查课程数据</h1>
       <p id="boot-status">请稍候。</p>
     </div>
@@ -20,10 +20,15 @@
       try {
         const resp = await fetch('/api/status', { cache: 'no-store' });
         const data = await resp.json();
-        location.replace(data.ready ? '/scheduler.html?v=ui2' : '/bootstrap.html?v=ui2');
+        if (data.ready) {
+          location.replace('/scheduler.html?v=v5');
+          return;
+        }
+        el.textContent = data.message || '未检测到全校课表，正在进入导出器。';
+        setTimeout(() => location.replace('/exporter/'), 500);
       } catch (err) {
-        el.textContent = '本地服务不可用，正在进入导入页。';
-        setTimeout(() => location.replace('/bootstrap.html?v=ui2'), 600);
+        el.textContent = '本地服务暂不可用，正在进入导出器。';
+        setTimeout(() => location.replace('/exporter/'), 600);
       }
     })();
   </script>

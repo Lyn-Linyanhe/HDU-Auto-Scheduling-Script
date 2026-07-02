@@ -665,6 +665,117 @@
     return { count, capped, limit, approximate: capped && count < limit };
   }
 
+  function minGroupCredit(group) {
+    const options = optionsForGroup(group);
+    if (!options.length) return 0;
+    return options.reduce((min, option) => Math.min(min, optionCredits(option)), Number.POSITIVE_INFINITY);
+  }
+
+  function maxGroupCredit(group) {
+    const options = optionsForGroup(group);
+    if (!options.length) return 0;
+    return options.reduce((max, option) => Math.max(max, optionCredits(option)), 0);
+  }
+
+  function lockedItemForGroup(group) {
+    if (!group.lockedItemId) return null;
+    return (group.items || []).find((item) => item.id === group.lockedItemId) || (group.items || [])[0] || null;
+  }
+
+  function relaxedHasSolution(groups, state, patch) {
+    const result = generateSolutions(groups, { ...state, ...patch }, 1);
+    return (result.results || []).length > 0;
+  }
+
+  function diagnoseNoSolutions(groups, state, context = {}) {
+    const constraints = constraintsFromState(state);
+    const ordered = orderedGroups(groups || []);
+    const reasons = [];
+    const add = (type, text) => {
+      if (text && !reasons.some((item) => item.text === text)) reasons.push({ type, text });
+    };
+
+    for (const token of context.unresolvedRequired || []) {
+      add('required', `必选课程“${token}”没有匹配到全校课表中的课程，请改用课程号或从搜索结果添加。`);
+    }
+    if (!ordered.length) {
+      add('course', '当前没有可参与组合的课组，请先添加已选课、锁定课或必选课程。');
+      return reasons;
+    }
+
+    for (const group of ordered) {
+      const optionCount = optionsForGroup(group).length;
+      if (!optionCount) add('course', `课组“${group.name || group.id}”没有可选教学班。`);
+    }
+
+    const locked = ordered.map(lockedItemForGroup).filter(Boolean);
+    for (let i = 0; i < locked.length; i += 1) {
+      for (let j = i + 1; j < locked.length; j += 1) {
+        if (sameBaseCourse(locked[i], locked[j])) {
+          add('locked', `锁定课程“${locked[i].courseName}”和“${locked[j].courseName}”属于同一课程号，只能保留一个教学班。`);
+        } else if (courseConflict(locked[i], locked[j])) {
+          add('locked', `锁定课程“${locked[i].courseName}”和“${locked[j].courseName}”存在时间冲突。`);
+        }
+      }
+    }
+
+    const minPossibleCredit = ordered.reduce((sum, group) => sum + minGroupCredit(group), 0);
+    const maxPossibleCredit = ordered.reduce((sum, group) => sum + maxGroupCredit(group), 0);
+    if (maxPossibleCredit < constraints.minCredit) {
+      add('credit', `当前可选课程最多约 ${maxPossibleCredit.toFixed(2)} 学分，低于学分下限 ${constraints.minCredit.toFixed(2)}。`);
+    }
+    if (minPossibleCredit > constraints.maxCredit) {
+      add('credit', `当前必选/锁定部分至少约 ${minPossibleCredit.toFixed(2)} 学分，超过学分上限 ${constraints.maxCredit.toFixed(2)}。`);
+    }
+
+    const blocked = parseList(constraints.blockedTeachers).map((item) => item.toLowerCase());
+    if (blocked.length) {
+      for (const group of ordered.filter((item) => !item.optional)) {
+        const viable = optionsForGroup(group).filter((option) => {
+          if (!option) return true;
+          const teacher = (option.teacher || '').toLowerCase();
+          return !blocked.some((bad) => bad && teacher.includes(bad));
+        });
+        if (!viable.length) add('teacher', `“${group.name || group.id}”的可选教学班都被排除教师条件过滤掉了。`);
+      }
+    }
+
+    if (!reasons.length && relaxedHasSolution(ordered, state, {
+      maxEarly: 5,
+      maxLunch: 5,
+      maxLate: 5,
+      minFreeDays: 0,
+    })) {
+      add('time', '放宽早八、午间压缩、晚课或全天无课限制后可以找到方案，说明时间级约束过紧。');
+    }
+
+    if (!reasons.length && relaxedHasSolution(ordered, state, {
+      pairRules: '',
+      sameTeacherRules: '',
+    })) {
+      add('scheme', '移除方案级约束后可以找到方案，说明强制一起或教师一致规则过紧。');
+    }
+
+    if (!reasons.length && blocked.length && relaxedHasSolution(ordered, state, {
+      blockedTeachers: '',
+    })) {
+      add('teacher', '移除排除教师后可以找到方案，说明排除教师条件过紧。');
+    }
+
+    if (!reasons.length && relaxedHasSolution(ordered, state, {
+      minCredit: 0,
+      maxCredit: 45,
+    })) {
+      add('credit', '放宽学分上下限后可以找到方案，说明学分范围过窄。');
+    }
+
+    if (!reasons.length) {
+      add('unknown', '在当前课组集合中没有找到无冲突组合，可能是课程时间冲突、同课程号重复，或多个约束叠加导致。');
+    }
+
+    return reasons.slice(0, 8);
+  }
+
   function groupFromSelection(selection, courses) {
     return {
       id: selection.groupId,
@@ -702,6 +813,7 @@
     countMetrics,
     generateSolutions,
     estimateSolutions,
+    diagnoseNoSolutions,
     groupFromSelection,
     courseConflict,
     sameBaseCourse,

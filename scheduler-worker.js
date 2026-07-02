@@ -7,7 +7,7 @@ function signatureForItems(items) {
 }
 
 self.onmessage = (event) => {
-  const { id, type, groups, state, limit } = event.data || {};
+  const { id, type, groups, state, limit, context } = event.data || {};
   try {
     if (type === 'estimate') {
       self.postMessage({
@@ -30,6 +30,15 @@ self.onmessage = (event) => {
             signature: signatureForItems(solution.items),
           })),
         },
+      });
+      return;
+    }
+
+    if (type === 'diagnose') {
+      self.postMessage({
+        id,
+        ok: true,
+        result: hdu.diagnoseNoSolutions(groups || [], state || {}, context || {}),
       });
       return;
     }

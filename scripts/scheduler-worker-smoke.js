@@ -56,9 +56,19 @@ vm.runInContext(readText('scheduler-worker.js'), context, { filename: 'scheduler
 
 context.self.onmessage({ data: { id: 'estimate', type: 'estimate', groups, state, limit: 1000 } });
 context.self.onmessage({ data: { id: 'generate', type: 'generate', groups, state, limit: 20 } });
+context.self.onmessage({
+  data: {
+    id: 'diagnose-credit',
+    type: 'diagnose',
+    groups,
+    state: { ...state, minCredit: 99, maxCredit: 100 },
+    context: {},
+  },
+});
 
 const estimate = context.postedMessages.find((message) => message.id === 'estimate');
 const generated = context.postedMessages.find((message) => message.id === 'generate');
+const diagnosis = context.postedMessages.find((message) => message.id === 'diagnose-credit');
 
 if (!estimate?.ok || estimate.result.count < 1) {
   throw new Error(`Worker estimate failed: ${JSON.stringify(estimate)}`);
@@ -68,6 +78,9 @@ if (!generated?.ok || !generated.result.results.length) {
 }
 if (generated.result.results.some((solution) => !solution.signature)) {
   throw new Error('Worker generated a solution without a signature.');
+}
+if (!diagnosis?.ok || !diagnosis.result.some((reason) => /学分/.test(reason.text))) {
+  throw new Error(`Worker diagnosis should explain impossible credits: ${JSON.stringify(diagnosis)}`);
 }
 
 const optionalCourse = courses[0];
