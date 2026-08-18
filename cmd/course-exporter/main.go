@@ -128,6 +128,7 @@ func handleExport(state *appState) http.HandlerFunc {
 			"ok":                  true,
 			"count":               result.Count,
 			"courseName":          result.CourseName,
+			"courseSource":        result.CourseSource,
 			"fileName":            result.FileName,
 			"outputPath":          result.OutputPath,
 			"personalCount":       result.PersonalCount,
@@ -160,7 +161,7 @@ func handleOpenOutput(state *appState) http.HandlerFunc {
 		status := state.service.Status()
 		outputPath := strings.TrimSpace(status.OutputPath)
 		if outputPath == "" {
-			outputPath, _ = filepath.Abs("course.json")
+			outputPath, _ = school.OutputFilePath("course.json")
 		}
 		if err := openOutputPath(outputPath); err != nil {
 			writeJSON(w, map[string]any{"ok": false, "error": err.Error(), "path": outputPath})

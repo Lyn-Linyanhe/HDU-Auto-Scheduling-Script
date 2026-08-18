@@ -1,14 +1,62 @@
+# Build outputs
 /dist/
 /release/
-/course.json
-/personal-schedule.json
-*.xlsx
-*.xls
 *.exe
 *.log
+
+# Local course data
+/course.json
+/personal-schedule.json
+/course-export-diagnosis.json
+/personal-schedule-live.json
+/live-schedule-sync.json
+/target-schedule.json
+/hdu-target-timetable*.json
+/hdu-current-timetable*.json
+/course.json.bak-*
+/login-config.json
+/选课脚本/config.json
+*.xlsx
+*.xls
+*.exe~
+
+# Smart Agent generated files
+/action-plan.json
+/agent-settings.json
+/execution-approval.json
+/execution-package.json
+/execution-log.json
+/fallback-recommendations.json
+/execution-runbook.md
+/run-killcourse.bat
+/HDU-Smart-Course-Agent/personal-schedule.json
+/HDU-Smart-Course-Agent/config.json
+/HDU-Smart-Course-Agent/target-schedule.json
+/HDU-Smart-Course-Agent/hdu-target-timetable*.json
+/HDU-Smart-Course-Agent/hdu-current-timetable*.json
+/HDU-Smart-Course-Agent/action-plan.json
+/HDU-Smart-Course-Agent/personal-schedule-live.json
+/HDU-Smart-Course-Agent/live-schedule-sync.json
+/HDU-Smart-Course-Agent/agent-settings.json
+/HDU-Smart-Course-Agent/execution-approval.json
+/HDU-Smart-Course-Agent/execution-package.json
+/HDU-Smart-Course-Agent/execution-log.json
+/HDU-Smart-Course-Agent/fallback-recommendations.json
+/HDU-Smart-Course-Agent/execution-runbook.md
+/HDU-Smart-Course-Agent/run-killcourse.bat
+
+# Temporary test/runtime directories
+/tmp/
+/tmp-smart-agent-e2e/
+/tmp-smart-agent-ui-smoke/
+/.tmp-*/
+/.gocache/
+
+# Local environment and OS files
 .env
 .env.*
 .DS_Store
 Thumbs.db
-/tmp/
-/.tmp-*/
+
+# Private planning notes
+/项目待办.md

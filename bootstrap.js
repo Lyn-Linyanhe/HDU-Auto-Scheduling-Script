@@ -80,9 +80,9 @@
 
   async function copyNote() {
     const note = [
-      '1. 运行 hdu-course-exporter.exe。',
-      '2. 在浏览器页面登录并导出 course.json。',
-      '3. 把 course.json 放到 hdu-offline-scheduler.exe 同目录，或在当前页面拖拽导入。',
+      '1. 运行 HDU-Auto-Scheduling-Script.exe。',
+      '2. 如果当前目录没有 course.json，浏览器会自动进入课程导出页。',
+      '3. 导出完成后会自动进入排课页；也可以在当前页面拖拽导入已有 course.json。',
     ].join('\n');
     try {
       await navigator.clipboard.writeText(note);

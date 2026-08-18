@@ -13,6 +13,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 )
 
 var classCodeRe = regexp.MustCompile(`\(\d{4}-\d{4}-\d\)-[A-Za-z0-9]+-\d{1,3}`)
@@ -48,10 +49,18 @@ type xlsxSharedStrings struct {
 
 func EnsureCourseFile(jsonName string) (*CoursePayload, string, error) {
 	if payload, err := ReadCourseFile(jsonName); err == nil {
-		return payload, "json", nil
+		if HasCourseCredits(payload) {
+			return payload, "json", nil
+		}
+
+		xlsxName, excelErr := findCourseExcel(filepath.Dir(jsonName))
+		if excelErr != nil {
+			return payload, "json-missing-credit", nil
+		}
+		return replaceCreditlessJSONFromExcel(jsonName, xlsxName)
 	}
 
-	xlsxName, err := findCourseExcel(".")
+	xlsxName, err := findCourseExcel(filepath.Dir(jsonName))
 	if err != nil {
 		return nil, "", err
 	}
@@ -63,14 +72,70 @@ func EnsureCourseFile(jsonName string) (*CoursePayload, string, error) {
 		return nil, "", errors.New("Excel 中没有识别到课程数据")
 	}
 
-	data, err := json.MarshalIndent(payload, "", "  ")
-	if err != nil {
-		return nil, "", err
-	}
-	if err := os.WriteFile(jsonName, data, 0644); err != nil {
+	if err := writeCoursePayload(jsonName, payload); err != nil {
 		return nil, "", err
 	}
 	return payload, filepath.Base(xlsxName), nil
+}
+
+func HasCourseCredits(payload *CoursePayload) bool {
+	if payload == nil {
+		return false
+	}
+	for _, item := range payload.Items {
+		for _, key := range []string{"xf", "credits", "credit"} {
+			value, ok := item[key]
+			if !ok {
+				continue
+			}
+			credit, err := strconv.ParseFloat(strings.TrimSpace(textValue(value)), 64)
+			if err == nil && credit > 0 {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func replaceCreditlessJSONFromExcel(jsonName, xlsxName string) (*CoursePayload, string, error) {
+	payload, err := ReadCourseExcel(xlsxName)
+	if err != nil {
+		return nil, "", err
+	}
+	if len(payload.Items) == 0 || !HasCourseCredits(payload) {
+		return nil, "", errors.New("Excel 中没有可用的带学分课程数据")
+	}
+
+	backupName, err := backupCreditlessCourseFile(jsonName)
+	if err != nil {
+		return nil, "", err
+	}
+	if err := writeCoursePayload(jsonName, payload); err != nil {
+		return nil, "", err
+	}
+	return payload, filepath.Base(xlsxName) + "（已备份 " + filepath.Base(backupName) + "）", nil
+}
+
+func backupCreditlessCourseFile(jsonName string) (string, error) {
+	data, err := os.ReadFile(jsonName)
+	if err != nil {
+		return "", err
+	}
+	directory := filepath.Dir(jsonName)
+	base := strings.TrimSuffix(filepath.Base(jsonName), filepath.Ext(jsonName))
+	backupName := filepath.Join(directory, base+".incomplete-"+time.Now().Format("20060102T150405.000000000")+".json")
+	if err := os.WriteFile(backupName, data, 0644); err != nil {
+		return "", err
+	}
+	return backupName, nil
+}
+
+func writeCoursePayload(jsonName string, payload *CoursePayload) error {
+	data, err := json.MarshalIndent(payload, "", "  ")
+	if err != nil {
+		return err
+	}
+	return WriteCourseFile(jsonName, data)
 }
 
 func ReadCourseExcel(name string) (*CoursePayload, error) {

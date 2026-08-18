@@ -9,6 +9,7 @@
   let workerJobId = 0;
   let workerUnavailable = false;
   let schedulingBusy = false;
+  let creditDataAvailable = true;
 
   const els = {
     subtitle: document.getElementById('subtitle'),
@@ -31,17 +32,17 @@
     reloadCourse: document.getElementById('reload-course'),
     minCredit: document.getElementById('min-credit'),
     maxCredit: document.getElementById('max-credit'),
+    creditWarning: document.getElementById('credit-data-warning'),
     maxEarly: document.getElementById('max-early'),
     maxLunch: document.getElementById('max-lunch'),
     maxLate: document.getElementById('max-late'),
     minFreeDays: document.getElementById('min-free-days'),
     blockedTeachers: document.getElementById('blocked-teachers'),
-    preferredTeachers: document.getElementById('preferred-teachers'),
-    requiredCourses: document.getElementById('required-courses'),
-    requiredSelectedPicks: document.getElementById('required-selected-picks'),
-    requiredQuickPicks: document.getElementById('required-quick-picks'),
-    requiredSearch: document.getElementById('required-search'),
-    requiredSearchResults: document.getElementById('required-search-results'),
+    lockedSelectedPicks: document.getElementById('locked-selected-picks'),
+    lockedQuickPicks: document.getElementById('locked-quick-picks'),
+    lockedSearch: document.getElementById('locked-search'),
+    lockedSearchResults: document.getElementById('locked-search-results'),
+    legacyWarning: document.getElementById('legacy-course-lock-warning'),
     pairRules: document.getElementById('pair-rules'),
     sameTeacherRules: document.getElementById('same-teacher-rules'),
     schemeCurrentRules: document.getElementById('scheme-current-rules'),
@@ -83,8 +84,16 @@
   }
 
   function formatCredit(value) {
+    if (!creditDataAvailable) return '未知';
     const number = Number(value);
     return Number.isFinite(number) ? number.toFixed(2) : '0.00';
+  }
+
+  function syncCreditAvailability() {
+    const unavailable = !creditDataAvailable;
+    els.minCredit.disabled = unavailable;
+    els.maxCredit.disabled = unavailable;
+    els.creditWarning.hidden = !unavailable;
   }
 
   function syncForm() {
@@ -96,10 +105,9 @@
     els.maxLate.value = state.maxLate ?? 5;
     els.minFreeDays.value = state.minFreeDays ?? 0;
     els.blockedTeachers.value = state.blockedTeachers || '';
-    els.preferredTeachers.value = state.preferredTeachers || '';
-    els.requiredCourses.value = state.requiredCourses || '';
     els.pairRules.value = state.pairRules || '';
     els.sameTeacherRules.value = state.sameTeacherRules || '';
+    syncCreditAvailability();
   }
 
   function persistState() {
@@ -115,8 +123,6 @@
     state.minFreeDays = clampDayLimit(els.minFreeDays.value);
     els.minFreeDays.value = state.minFreeDays;
     state.blockedTeachers = els.blockedTeachers.value;
-    state.preferredTeachers = els.preferredTeachers.value;
-    state.requiredCourses = els.requiredCourses.value;
     state.pairRules = els.pairRules.value;
     state.sameTeacherRules = els.sameTeacherRules.value;
     HDU.saveState(state);
@@ -197,6 +203,35 @@
       map[course.groupId] = entry;
     }
     setSelectionMap(map);
+  }
+
+  function applyLegacyCourseLockMigration() {
+    const legacyText = String(state.legacyCourseLockText || '').trim();
+    if (!legacyText) return;
+    const migration = HDU.migrateLegacyCourseLocks(courses, legacyText);
+    const map = getSelectionMap();
+    const warnings = [...migration.unresolved];
+    for (const course of migration.matches) {
+      const entry = map[course.groupId] || {
+        groupId: course.groupId,
+        groupName: course.courseName,
+        items: [],
+        lockedItemId: '',
+      };
+      if (entry.lockedItemId && entry.lockedItemId !== course.id) {
+        warnings.push(`${course.courseName}（已有其他锁定教学班）`);
+        continue;
+      }
+      if (!entry.items.some((item) => item.id === course.id)) {
+        entry.items.push(selectionSnapshot(course, 'legacy'));
+      }
+      entry.lockedItemId = course.id;
+      map[course.groupId] = entry;
+    }
+    state.selectedGroups = map;
+    state.legacyCourseLockText = '';
+    state.legacyCourseLockWarnings = [...new Set(warnings)];
+    persistState();
   }
 
   async function autoImportPersonalSchedule() {
@@ -356,38 +391,17 @@
     return HDU.baseCourseCode(course.displayCode || course.sectionName || course.groupId || course.courseName);
   }
 
-  function requiredTokens() {
-    return HDU.parseList(els.requiredCourses.value);
-  }
-
-  function requiredResolutions() {
-    return requiredTokens().map((token) => HDU.resolveRequiredCourseGroups(courses, token));
-  }
-
-  function unresolvedRequiredTokens() {
-    return requiredResolutions().filter((resolution) => resolution.unresolved);
-  }
-
   function schedulerState() {
     return {
-      ...state,
-      requiredCourses: '',
-    };
-  }
-
-  function requiredDisplayLabel(token) {
-    const resolution = HDU.resolveRequiredCourseGroups(courses, token);
-    if (resolution.unresolved) return { name: token, code: '未匹配到课程', count: 0 };
-    const items = resolution.groups.flatMap((group) => group.items || []);
-    const first = items[0] || {};
-    const names = [...new Set(resolution.groups.flatMap((group) => group.sourceGroups?.length ? [group.name] : [group.name]).filter(Boolean))];
-    const code = resolution.strategy === 'code'
-      ? HDU.baseCourseCode(first.displayCode || first.sectionName || first.groupId || token)
-      : `${resolution.strategy === 'practical' ? '关联匹配' : '课程名匹配'} · ${names.length || 1} 个课组`;
-    return {
-      name: first.courseName || token,
-      code,
-      count: new Set(items.map((item) => item.id)).size,
+      minCredit: creditDataAvailable ? state.minCredit : 0,
+      maxCredit: creditDataAvailable ? state.maxCredit : 45,
+      maxEarly: state.maxEarly,
+      maxLunch: state.maxLunch,
+      maxLate: state.maxLate,
+      minFreeDays: state.minFreeDays,
+      blockedTeachers: state.blockedTeachers || '',
+      pairRules: state.pairRules || '',
+      sameTeacherRules: state.sameTeacherRules || '',
     };
   }
 
@@ -402,14 +416,6 @@
     ].filter(Boolean).join(' ').toLowerCase();
   }
 
-  function syncRequiredText(tokens) {
-    const unique = [...new Set(tokens.map((item) => String(item || '').trim()).filter(Boolean))];
-    els.requiredCourses.value = unique.join('\n');
-    persistState();
-    clearCandidateState();
-    renderAll();
-  }
-
   function appendTextareaLine(textarea, value) {
     const token = String(value || '').trim();
     if (!token) return;
@@ -421,12 +427,30 @@
     renderAll();
   }
 
-  function appendRequiredCourse(course) {
-    appendTextareaLine(els.requiredCourses, constraintToken(course));
+  function addAndLockSection(course, source = 'manual') {
+    if (!course) return;
+    const map = getSelectionMap();
+    const entry = map[course.groupId] || {
+      groupId: course.groupId,
+      groupName: course.courseName,
+      items: [],
+      lockedItemId: '',
+    };
+    if (!entry.items.some((item) => item.id === course.id)) {
+      entry.items.push(selectionSnapshot(course, source));
+    }
+    entry.lockedItemId = course.id;
+    map[course.groupId] = entry;
+    setSelectionMap(map);
   }
 
-  function removeRequiredToken(token) {
-    syncRequiredText(requiredTokens().filter((item) => item !== token));
+  function renderLegacyCourseLockWarning() {
+    if (!els.legacyWarning) return;
+    const warnings = Array.isArray(state.legacyCourseLockWarnings) ? state.legacyCourseLockWarnings : [];
+    els.legacyWarning.hidden = !warnings.length;
+    els.legacyWarning.textContent = warnings.length
+      ? `旧版本课程约束未自动锁定：${warnings.join('、')}。请搜索并选择具体教学班后锁定。`
+      : '';
   }
 
   function appendPairRule(left, right) {
@@ -561,7 +585,12 @@
 
   function setCandidatePage(value) {
     const page = Number(value);
-    if (!Number.isFinite(page) || !solutions.length) return;
+    if (!Number.isInteger(page) || page < 1 || !solutions.length) {
+      const currentPage = solutions.length ? (state.candidateCursor || 0) + 1 : '';
+      if (els.candidatePage) els.candidatePage.value = String(currentPage);
+      if (els.tableCandidatePage) els.tableCandidatePage.value = String(currentPage);
+      return;
+    }
     applyCandidate(page - 1);
   }
 
@@ -677,26 +706,73 @@
     return (state.baseCourseIds || []).filter((id) => !shown.has(id)).length;
   }
 
+  function courseBrief(item) {
+    if (!item) return '';
+    const code = item.displayCode || item.sectionName || item.groupId || '';
+    return [item.courseName, code].filter(Boolean).join(' / ');
+  }
+
+  function compactCourseList(items, limit = 4) {
+    const labels = [...new Set((items || []).map(courseBrief).filter(Boolean))];
+    if (!labels.length) return '';
+    const shown = labels.slice(0, limit).join('、');
+    return labels.length > limit ? `${shown} 等 ${labels.length} 门` : shown;
+  }
+
+  function baseScheduleItems() {
+    return (state.baseCourseIds || []).map((id) => courses.find((course) => course.id === id)).filter(Boolean);
+  }
+
+  function solutionDiff(items) {
+    const solutionIds = new Set((items || []).map((item) => item.id));
+    const baseIds = baseIdSet();
+    const baseItems = baseScheduleItems();
+    return {
+      kept: baseItems.filter((item) => solutionIds.has(item.id)),
+      dropped: baseItems.filter((item) => !solutionIds.has(item.id)),
+      added: (items || []).filter((item) => !baseIds.has(item.id)),
+      locked: (items || []).filter((item) => lockedItemIds().has(item.id)),
+      hasBase: Boolean((state.baseCourseIds || []).length),
+    };
+  }
+
   function solutionExplanation(solution) {
     if (!solution) return [];
     const items = solution.items || [];
     const metrics = solution.metrics || HDU.countMetrics(items);
-    const reasons = [
-      `排序优先看全天无课天数，本方案有 ${metrics.freeDays} 天；代价分越低越好，当前 ${Number(solution.score || 0).toFixed(1)}。`,
-      `学分 ${formatCredit(solution.credits)}，需退选底板课程 ${withdrawalCount(items)} 门。`,
-      `时间分布：早八 ${metrics.earlyDays} 天，午间压缩 ${metrics.lunchDays} 天，晚课 ${metrics.lateDays} 天。`,
+    const diff = solutionDiff(items);
+    const sections = [
+      {
+        title: '排序依据',
+        rows: [
+          `全天无课 ${metrics.freeDays} 天，候选排序会优先把全天无课更多的方案放前面。`,
+          `排序指标 ${Number(solution.score || 0).toFixed(1)}，数值越低代表时间负担越小。`,
+        ],
+      },
+      {
+        title: '方案统计',
+        rows: [
+          `总学分 ${formatCredit(solution.credits)}；早八 ${metrics.earlyDays} 天，午间压缩 ${metrics.lunchDays} 天，晚课 ${metrics.lateDays} 天。`,
+          diff.hasBase
+            ? `相对“${state.baseScheduleName || '现有课表'}”需退选 ${diff.dropped.length} 门，保留 ${diff.kept.length} 门，新增/替换 ${diff.added.length} 门。`
+            : '尚未导入个人/班级底板，退课数按 0 计算。',
+        ],
+      },
     ];
 
-    const preferred = HDU.parseList(els.preferredTeachers.value).map((item) => item.toLowerCase());
-    const preferredHits = [];
-    if (preferred.length) {
-      for (const item of items) {
-        const teacher = (item.teacher || '').toLowerCase();
-        if (preferred.some((good) => good && teacher.includes(good))) {
-          preferredHits.push(`${item.courseName}/${item.teacher || '未填写教师'}`);
-        }
-      }
-      if (preferredHits.length) reasons.push(`命中偏好教师：${[...new Set(preferredHits)].slice(0, 4).join('、')}。`);
+    if (diff.hasBase) {
+      const rows = [];
+      if (diff.dropped.length) rows.push(`需退选：${compactCourseList(diff.dropped)}。`);
+      if (diff.added.length) rows.push(`新增/替换：${compactCourseList(diff.added)}。`);
+      if (diff.kept.length) rows.push(`继续保留：${compactCourseList(diff.kept)}。`);
+      sections.push({ title: '底板变化', rows: rows.length ? rows : ['与当前底板完全一致，不需要退选或新增。'] });
+    }
+
+    if (diff.locked.length) {
+      sections.push({
+        title: '锁定课程',
+        rows: [`已保留锁定课程：${compactCourseList(diff.locked)}。`],
+      });
     }
 
     const pairHits = HDU.parsePairRules(els.pairRules.value).filter((rule) => {
@@ -706,7 +782,10 @@
         && items.some((item) => HDU.courseSearchText(item).includes(right));
     });
     if (pairHits.length) {
-      reasons.push(`满足强制一起：${pairHits.slice(0, 4).map((rule) => `${rule.from} -> ${rule.to}`).join('；')}。`);
+      sections.push({
+        title: '强制一起',
+        rows: [`满足：${pairHits.slice(0, 4).map((rule) => `${rule.from} -> ${rule.to}`).join('；')}。`],
+      });
     }
 
     const sameTeacherHits = HDU.parsePairRules(els.sameTeacherRules.value).filter((rule) => {
@@ -717,18 +796,33 @@
       return right.some((item) => HDU.splitTeachers(item.teacher).some((teacher) => leftTeachers.has(teacher)));
     });
     if (sameTeacherHits.length) {
-      reasons.push(`满足教师一致：${sameTeacherHits.slice(0, 4).map((rule) => `${rule.from} = ${rule.to}`).join('；')}。`);
+      sections.push({
+        title: '教师一致',
+        rows: [`满足：${sameTeacherHits.slice(0, 4).map((rule) => `${rule.from} = ${rule.to}`).join('；')}。`],
+      });
     }
 
-    return reasons;
+    if (diff.dropped.length) {
+      sections.push({
+        title: '注意',
+        rows: ['退课是真实执行中的高风险动作；当前页面只用于模拟与导出，执行前请再次确认。'],
+      });
+    }
+
+    return sections.filter((section) => section.rows?.length);
   }
 
   function renderSolutionDetails(solution) {
-    const reasons = solutionExplanation(solution);
-    if (!reasons.length) return '';
+    const sections = solutionExplanation(solution);
+    if (!sections.length) return '';
     return `
       <div class="solution-explain">
-        ${reasons.map((reason) => `<div>${escapeHtml(reason)}</div>`).join('')}
+        ${sections.map((section) => `
+          <section class="solution-explain-section">
+            <h5>${escapeHtml(section.title)}</h5>
+            ${section.rows.map((row) => `<div>${escapeHtml(row)}</div>`).join('')}
+          </section>
+        `).join('')}
       </div>
     `;
   }
@@ -742,9 +836,28 @@
     els.resultList.innerHTML = `
       <div class="empty-state diagnostic-state">
         <strong>没有候选方案，可能原因如下：</strong>
-        ${rows.map((reason) => `<div class="diagnostic-item">${escapeHtml(reason.text || reason)}</div>`).join('')}
+        ${rows.map((reason) => `
+          <div class="diagnostic-item diagnostic-${escapeHtml(reason.type || 'unknown')}">
+            <div class="diagnostic-type">${escapeHtml(diagnosticTypeLabel(reason.type))}</div>
+            <div>${escapeHtml(reason.text || reason)}</div>
+            ${reason.action ? `<div class="diagnostic-action">建议：${escapeHtml(reason.action)}</div>` : ''}
+          </div>
+        `).join('')}
       </div>
     `;
+  }
+
+  function diagnosticTypeLabel(type) {
+    return ({
+      course: '课组数据',
+      locked: '锁定冲突',
+      conflict: '课程互斥',
+      credit: '学分范围',
+      teacher: '教师条件',
+      time: '时间约束',
+      scheme: '方案约束',
+      unknown: '综合约束',
+    })[type] || '诊断';
   }
 
   function renderSummary() {
@@ -913,169 +1026,103 @@
 
   function renderConstraintQuickPicks() {
     const items = allSelectedItems();
-    renderRequiredQuickPicks(items);
-    renderRequiredSelectedPicks();
-    renderRequiredSearchResults();
+    renderLockedQuickPicks(items);
+    renderLockedSelectedPicks();
+    renderLockedSearchResults();
+    renderLegacyCourseLockWarning();
     renderSchemeCurrentRules();
     renderLinkedCourseSuggestions();
   }
 
-  function renderRequiredQuickPicks(items) {
-    if (!els.requiredQuickPicks) return;
+  function renderLockedQuickPicks(items) {
+    if (!els.lockedQuickPicks) return;
     if (!items.length) {
-      els.requiredQuickPicks.innerHTML = '<span class="quick-empty">先在左侧加入课程</span>';
+      els.lockedQuickPicks.innerHTML = '<span class="quick-empty">先在左侧加入课程</span>';
       return;
     }
-    const seen = new Set();
-    els.requiredQuickPicks.innerHTML = items.map((item) => {
-      const token = constraintToken(item);
-      if (!token || seen.has(token)) return '';
-      seen.add(token);
+    const unique = [...new Map(items.map((item) => [item.id, item])).values()];
+    els.lockedQuickPicks.innerHTML = unique.map((item) => {
+      const locked = isLocked(item);
       return `
-        <button class="ghost-btn small required-add-btn" type="button" data-quick-required="${escapeHtml(item.id)}">
+        <button class="ghost-btn small locked-add-btn" type="button" data-quick-lock="${escapeHtml(item.id)}" ${locked ? 'disabled' : ''}>
           <span>${escapeHtml(item.courseName)}</span>
-          <small>${escapeHtml(token)}</small>
+          <small>${escapeHtml(item.sectionName || item.displayCode || '教学班')}</small>
         </button>
       `;
     }).join('');
-    els.requiredQuickPicks.querySelectorAll('[data-quick-required]').forEach((button) => {
+    els.lockedQuickPicks.querySelectorAll('[data-quick-lock]').forEach((button) => {
       button.addEventListener('click', () => {
-        const course = courses.find((item) => item.id === button.dataset.quickRequired);
-        if (course) appendRequiredCourse(course);
+        const course = courses.find((item) => item.id === button.dataset.quickLock);
+        if (course) addAndLockSection(course);
       });
     });
   }
 
-  function renderRequiredSelectedPicks() {
-    if (!els.requiredSelectedPicks) return;
-    const tokens = requiredTokens();
-    if (!tokens.length) {
-      els.requiredSelectedPicks.innerHTML = '<span class="quick-empty">还没有必选课程</span>';
+  function renderLockedSelectedPicks() {
+    if (!els.lockedSelectedPicks) return;
+    const lockedItems = selectedGroups.flatMap((group) => group.items.filter((item) => group.lockedItemId === item.id));
+    if (!lockedItems.length) {
+      els.lockedSelectedPicks.innerHTML = '<span class="quick-empty">还没有锁定教学班</span>';
       return;
     }
-    els.requiredSelectedPicks.innerHTML = tokens.map((token) => {
-      const label = requiredDisplayLabel(token);
-      const countText = label.count > 1 ? `${label.count} 个教学班` : '1 个教学班';
+    els.lockedSelectedPicks.innerHTML = lockedItems.map((item) => {
       return `
-        <div class="required-picked-item">
+        <div class="locked-picked-item">
           <div>
-            <strong>${escapeHtml(label.name)}</strong>
-            <span>${escapeHtml(label.code)} · ${escapeHtml(countText)}</span>
+            <strong>${escapeHtml(item.courseName)}</strong>
+            <span>${escapeHtml(item.sectionName || item.displayCode || '教学班')} · ${escapeHtml(item.teacher || '未填写教师')}</span>
           </div>
-          <button class="danger-btn small" type="button" data-remove-required="${escapeHtml(token)}">删除</button>
+          <button class="danger-btn small" type="button" data-unlock-course="${escapeHtml(item.id)}">取消锁定</button>
         </div>
       `;
     }).join('');
-    els.requiredSelectedPicks.querySelectorAll('[data-remove-required]').forEach((button) => {
-      button.addEventListener('click', () => removeRequiredToken(button.dataset.removeRequired));
+    els.lockedSelectedPicks.querySelectorAll('[data-unlock-course]').forEach((button) => {
+      button.addEventListener('click', () => {
+        const course = courses.find((item) => item.id === button.dataset.unlockCourse);
+        if (course) toggleLockOption(course.groupId, course.id);
+      });
     });
   }
 
-  function renderRequiredSearchResults() {
-    if (!els.requiredSearchResults || !els.requiredSearch) return;
-    const keyword = els.requiredSearch.value.trim().toLowerCase();
+  function renderLockedSearchResults() {
+    if (!els.lockedSearchResults || !els.lockedSearch) return;
+    const keyword = els.lockedSearch.value.trim().toLowerCase();
     if (!keyword) {
-      els.requiredSearchResults.innerHTML = '<span class="quick-empty">输入关键词后搜索课程</span>';
+      els.lockedSearchResults.innerHTML = '<span class="quick-empty">输入关键词后搜索课程</span>';
       return;
     }
-    const groups = HDU.groupCourses(courses.filter((course) => courseNameCodeText(course).includes(keyword)))
-      .sort((a, b) => {
-        const aExact = a.name && a.name.toLowerCase() === keyword ? 0 : 1;
-        const bExact = b.name && b.name.toLowerCase() === keyword ? 0 : 1;
-        return aExact - bExact || a.name.localeCompare(b.name, 'zh-Hans-CN');
-      })
-      .slice(0, 20);
-    const aliasResolution = HDU.resolveRequiredCourseGroups(courses, els.requiredSearch.value.trim());
-    const aliasGroups = (!groups.length && !aliasResolution.unresolved) ? aliasResolution.groups : [];
-    if (!groups.length && !aliasGroups.length) {
-      els.requiredSearchResults.innerHTML = '<span class="quick-empty">没有匹配课程</span>';
+    const matches = courses
+      .filter((course) => courseNameCodeText(course).includes(keyword))
+      .sort((a, b) => courseNameCodeText(a).localeCompare(courseNameCodeText(b), 'zh-Hans-CN'))
+      .slice(0, 30);
+    if (!matches.length) {
+      els.lockedSearchResults.innerHTML = '<span class="quick-empty">没有匹配课程</span>';
       return;
     }
-    const existing = new Set(requiredTokens());
-    els.requiredSearchResults.innerHTML = [
-      ...aliasGroups.map((group) => {
-        const token = aliasResolution.token;
-        const added = existing.has(token);
-        const source = group.sourceGroups?.length ? `关联到 ${group.sourceGroups.length} 个课组` : `${group.items.length} 个教学班`;
-        return `
-          <div class="required-search-item">
-            <div>
-              <strong>${escapeHtml(token)}</strong>
-              <span>${escapeHtml(source)} · ${group.items.length} 个教学班</span>
-            </div>
-            <button class="${added ? 'ghost-btn' : 'primary-btn'} small" type="button" data-search-required-token="${escapeHtml(token)}" ${added ? 'disabled' : ''}>
-              ${added ? '已加入' : '加入'}
-            </button>
-          </div>
-        `;
-      }),
-      ...groups.map((group) => {
-      const sample = group.items[0];
-      const token = constraintToken(sample);
-      const added = existing.has(token);
+    els.lockedSearchResults.innerHTML = matches.map((course) => {
+      const locked = isLocked(course);
       return `
-        <div class="required-search-item">
+        <div class="locked-search-item">
           <div>
-            <strong>${escapeHtml(group.name)}</strong>
-            <span>${escapeHtml(token)} · ${group.items.length} 个教学班</span>
+            <strong>${escapeHtml(course.courseName)}</strong>
+            <span>${escapeHtml(course.sectionName || course.displayCode || '教学班')} · ${escapeHtml(course.teacher || '未填写教师')}</span>
           </div>
-          <button class="${added ? 'ghost-btn' : 'primary-btn'} small" type="button" data-search-required="${escapeHtml(sample.id)}" ${added ? 'disabled' : ''}>
-            ${added ? '已加入' : '加入'}
+          <button class="${locked ? 'ghost-btn' : 'primary-btn'} small" type="button" data-search-lock="${escapeHtml(course.id)}" ${locked ? 'disabled' : ''}>
+            ${locked ? '已锁定' : '加入并锁定'}
           </button>
         </div>
       `;
-      }),
-    ].join('');
-    els.requiredSearchResults.querySelectorAll('[data-search-required-token]').forEach((button) => {
+    }).join('');
+    els.lockedSearchResults.querySelectorAll('[data-search-lock]').forEach((button) => {
       button.addEventListener('click', () => {
-        appendTextareaLine(els.requiredCourses, button.dataset.searchRequiredToken);
+        const course = courses.find((item) => item.id === button.dataset.searchLock);
+        if (course) addAndLockSection(course);
       });
     });
-    els.requiredSearchResults.querySelectorAll('[data-search-required]').forEach((button) => {
-      button.addEventListener('click', () => {
-        const course = courses.find((item) => item.id === button.dataset.searchRequired);
-        if (course) appendRequiredCourse(course);
-      });
-    });
-  }
-
-  function normalizedCourseTitle(name) {
-    return String(name || '').replace(/[（(]?[一二三四五六七八九十0-9]+[)）]?$/g, '').trim();
-  }
-
-  function linkBaseName(name) {
-    return normalizedCourseTitle(name)
-      .replace(/(课程实践|实验|课程设计|综合实践|实践|实训|设计)$/g, '')
-      .trim();
   }
 
   function linkedCoursePairs(limit = 500) {
-    const groups = HDU.groupCourses(courses);
-    const byName = new Map();
-    for (const group of groups) {
-      const key = normalizedCourseTitle(group.name);
-      if (!key) continue;
-      if (!byName.has(key)) byName.set(key, []);
-      byName.get(key).push(group);
-    }
-    const pairs = [];
-    const seen = new Set();
-    for (const group of groups) {
-      const name = normalizedCourseTitle(group.name);
-      if (!/(课程实践|实验|课程设计|综合实践|实践|实训|设计)$/.test(name)) continue;
-      const base = linkBaseName(name);
-      if (!base || base === name) continue;
-      const bases = byName.get(base) || [];
-      for (const main of bases) {
-        if (main.id === group.id) continue;
-        const key = [main.id, group.id].sort().join('|');
-        if (seen.has(key)) continue;
-        seen.add(key);
-        pairs.push([main, group]);
-        if (pairs.length >= limit) return pairs;
-      }
-    }
-    return pairs;
+    return HDU.findLinkedCoursePairs(courses, limit);
   }
 
   function renderLinkedCourseSuggestions() {
@@ -1141,7 +1188,10 @@
       els.tableResultCount.textContent = '0 个方案';
       if (els.candidatePage) els.candidatePage.value = '';
       if (els.tableCandidatePage) els.tableCandidatePage.value = '';
-      els.resultList.innerHTML = '<div class="empty-state">点击“生成候选课表”开始枚举。</div>';
+      const emptyMessage = (state.dismissedCandidates || []).length
+        ? '\u5df2\u5220\u9664\u672c\u8f6e\u5019\u9009\u65b9\u6848\uff0c\u53ef\u91cd\u65b0\u751f\u6210\u4ee5\u83b7\u53d6\u65b0\u7ed3\u679c\u3002'
+        : '\u70b9\u51fb\u201c\u751f\u6210\u5019\u9009\u8bfe\u8868\u201d\u5f00\u59cb\u679a\u4e3e\u3002';
+      els.resultList.innerHTML = `<div class="empty-state">${emptyMessage}</div>`;
       els.candidateTitle.textContent = '当前显示：已选课程预览';
       els.candidatePreview.disabled = true;
       els.candidateReturn.disabled = !state.candidatePreviewEnabled;
@@ -1174,7 +1224,7 @@
     els.resultList.innerHTML = `
       <article class="result-card active">
         <h4>方案 ${index + 1}${favorite ? ' · 已收藏' : ''}</h4>
-        <div class="meta">代价分 ${solution.score.toFixed(1)}（越低越好） · ${formatCredit(solution.credits)} 学分 · 需退课 ${withdrawalCount(solution.items)}</div>
+        <div class="meta">排序指标 ${solution.score.toFixed(1)}（越低越好） · ${formatCredit(solution.credits)} 学分 · 需退课 ${withdrawalCount(solution.items)}</div>
         <div class="result-stats">
           <span class="stat">早八 ${solution.metrics.earlyDays}</span>
           <span class="stat">午间 ${solution.metrics.lunchDays}</span>
@@ -1202,45 +1252,19 @@
   }
 
   function candidateGroups() {
-    const map = new Map();
-    const mergeGroup = (group, optional) => {
-      const entry = map.get(group.id) || {
-        id: group.id,
-        name: group.name,
-        items: [],
-        lockedItemId: group.lockedItemId || '',
-        optional: true,
-      };
-      const existing = new Set(entry.items.map((item) => item.id));
-      for (const item of group.items || []) {
-        if (!existing.has(item.id)) {
-          entry.items.push(item);
-          existing.add(item.id);
-        }
-      }
-      if (group.lockedItemId) entry.lockedItemId = group.lockedItemId;
-      entry.optional = Boolean(entry.lockedItemId) ? false : optional;
-      map.set(group.id, entry);
-    };
-    for (const group of selectedGroups) {
-      map.set(group.id, {
+    return selectedGroups.map((group) => ({
         id: group.id,
         name: group.name,
         items: [...group.items],
         lockedItemId: group.lockedItemId || '',
         optional: !group.lockedItemId,
-      });
-    }
-    for (const resolution of requiredResolutions()) {
-      if (resolution.unresolved) continue;
-      for (const group of resolution.groups) {
-        mergeGroup({ ...group, lockedItemId: group.lockedItemId || '' }, false);
-      }
-    }
-    return [...map.values()].filter((group) => group.items.length);
+      })).filter((group) => group.items.length);
   }
 
   function renderAll() {
+    if (els.exportCurrent) {
+      els.exportCurrent.textContent = state.candidatePreviewEnabled ? '保存为目标课表' : '保存当前课表';
+    }
     renderSummary();
     renderTimetable();
     renderCourseList();
@@ -1253,14 +1277,6 @@
   async function estimateCandidates() {
     if (schedulingBusy) return;
     persistState();
-    const unresolved = unresolvedRequiredTokens();
-    if (unresolved.length) {
-      const text = `必选课程未匹配：${unresolved.map((item) => item.token).join('、')}。请用课程搜索选择正确课程号，或检查课程名称。`;
-      state.candidateEstimate = text;
-      els.estimateText.textContent = text;
-      persistState();
-      return;
-    }
     const groups = candidateGroups();
     setSchedulingBusy(true);
     els.estimateText.textContent = '正在估算候选课表数量...';
@@ -1272,9 +1288,7 @@
       state.candidateEstimate = text;
       els.estimateText.textContent = text;
       if (!estimate.capped && estimate.count === 0) {
-        const reasons = await runSchedulerWorker('diagnose', groups, schedulerState(), 0, {
-          unresolvedRequired: unresolved.map((item) => item.token),
-        });
+        const reasons = await runSchedulerWorker('diagnose', groups, schedulerState(), 0);
         renderDiagnostics(reasons);
       }
       persistState();
@@ -1288,11 +1302,6 @@
   async function generateCandidates() {
     if (schedulingBusy) return;
     persistState();
-    const unresolved = unresolvedRequiredTokens();
-    if (unresolved.length) {
-      els.estimateText.textContent = `必选课程未匹配：${unresolved.map((item) => item.token).join('、')}。请先修正后再生成。`;
-      return;
-    }
     const groups = candidateGroups();
     setSchedulingBusy(true);
     els.estimateText.textContent = '正在检查候选规模...';
@@ -1318,9 +1327,7 @@
       persistState();
       renderAll();
       if (!solutions.length) {
-        const reasons = await runSchedulerWorker('diagnose', groups, schedulerState(), 0, {
-          unresolvedRequired: unresolved.map((item) => item.token),
-        });
+        const reasons = await runSchedulerWorker('diagnose', groups, schedulerState(), 0);
         renderDiagnostics(reasons);
       }
     } catch (error) {
@@ -1331,14 +1338,20 @@
   }
 
   async function restoreCandidates() {
-    if (!state.activeCandidate && !state.candidateCursor) return;
+    if (!state.activeCandidate && !state.candidateCursor && !(state.favoriteCandidates || []).length) return;
     const generated = await runSchedulerWorker('generate', candidateGroups(), schedulerState(), 500);
     solutions = generated.results;
+    if (solutions.length) {
+      const available = new Set(solutions.map((solution) => solution.signature));
+      state.favoriteCandidates = (state.favoriteCandidates || []).filter((signature) => available.has(signature));
+    }
     const bySignature = solutions.findIndex((solution) => solution.signature === state.activeCandidate);
     const nextIndex = bySignature >= 0 ? bySignature : Math.min(state.candidateCursor || 0, Math.max(0, solutions.length - 1));
     activeSolution = solutions[nextIndex] || null;
     state.candidateCursor = activeSolution ? nextIndex : 0;
     state.activeCandidate = activeSolution?.signature || '';
+    if (!activeSolution) state.candidatePreviewEnabled = false;
+    persistState();
   }
 
   function moveCandidate(delta) {
@@ -1349,10 +1362,27 @@
   function toggleFavoriteCandidate() {
     const solution = currentSolution();
     if (!solution) return;
+    toggleFavoriteSignature(solution.signature);
+  }
+
+  function toggleFavoriteSignature(signature) {
     const set = new Set(state.favoriteCandidates || []);
-    if (set.has(solution.signature)) set.delete(solution.signature);
-    else set.add(solution.signature);
+    if (set.has(signature)) set.delete(signature);
+    else set.add(signature);
     state.favoriteCandidates = [...set];
+    persistState();
+    renderResults();
+  }
+
+  function previewFavoriteCandidate(signature) {
+    const index = solutions.findIndex((solution) => solution.signature === signature);
+    if (index < 0) return;
+    state.resultListMode = 'current';
+    applyCandidate(index, true);
+  }
+
+  function removeFavoriteCandidate(signature) {
+    state.favoriteCandidates = (state.favoriteCandidates || []).filter((item) => item !== signature);
     persistState();
     renderResults();
   }
@@ -1360,6 +1390,27 @@
   function renderFavoriteCandidates() {
     const list = solutions.filter((solution) => (state.favoriteCandidates || []).includes(solution.signature));
     if (!els.resultList) return;
+    const favoriteCount = list.length;
+    els.resultCount.textContent = `${favoriteCount} \u4e2a\u6536\u85cf\u65b9\u6848`;
+    els.tableResultCount.textContent = `${favoriteCount} \u4e2a\u6536\u85cf\u65b9\u6848`;
+    if (els.candidatePage) els.candidatePage.value = '';
+    if (els.tableCandidatePage) els.tableCandidatePage.value = '';
+    [
+      els.candidatePrev,
+      els.candidateNext,
+      els.tableCandidatePrev,
+      els.tableCandidateNext,
+      els.candidatePage,
+      els.tableCandidatePage,
+      els.candidatePreview,
+      els.tableCandidatePreview,
+      els.candidateFavorite,
+      els.candidateDismiss,
+    ].forEach((control) => {
+      if (control) control.disabled = true;
+    });
+    if (els.candidateReturn) els.candidateReturn.disabled = !state.candidatePreviewEnabled;
+    if (els.tableCandidateReturn) els.tableCandidateReturn.disabled = !state.candidatePreviewEnabled;
     if (!list.length) {
       els.resultList.innerHTML = '<div class="empty-state">还没有收藏任何候选方案</div>';
       return;
@@ -1367,7 +1418,7 @@
     els.resultList.innerHTML = list.map((solution, index) => `
       <article class="result-card ${solution.signature === state.activeCandidate ? 'active' : ''}">
         <h4>收藏方案 ${index + 1}</h4>
-        <div class="meta">代价分 ${solution.score.toFixed(1)}（越低越好） · ${formatCredit(solution.credits)} 学分 · 需退课 ${withdrawalCount(solution.items)}</div>
+        <div class="meta">排序指标 ${solution.score.toFixed(1)}（越低越好） · ${formatCredit(solution.credits)} 学分 · 需退课 ${withdrawalCount(solution.items)}</div>
         <div class="result-stats">
           <span class="stat">早八 ${solution.metrics.earlyDays}</span>
           <span class="stat">午间 ${solution.metrics.lunchDays}</span>
@@ -1378,8 +1429,18 @@
           ${solution.items.map((item) => `<span>${escapeHtml(item.courseName)} / ${escapeHtml(item.sectionName)}</span>`).join('')}
         </div>
         ${renderSolutionDetails(solution)}
+        <div class="result-actions">
+          <button class="primary-btn small" type="button" data-favorite-preview="${escapeHtml(solution.signature)}">\u663e\u793a\u6b64\u65b9\u6848</button>
+          <button class="ghost-btn small" type="button" data-favorite-remove="${escapeHtml(solution.signature)}">\u53d6\u6d88\u6536\u85cf</button>
+        </div>
       </article>
     `).join('');
+    els.resultList.querySelectorAll('[data-favorite-preview]').forEach((button) => {
+      button.addEventListener('click', () => previewFavoriteCandidate(button.dataset.favoritePreview));
+    });
+    els.resultList.querySelectorAll('[data-favorite-remove]').forEach((button) => {
+      button.addEventListener('click', () => removeFavoriteCandidate(button.dataset.favoriteRemove));
+    });
   }
 
   function dismissCandidate() {
@@ -1388,10 +1449,15 @@
     const set = new Set(state.dismissedCandidates || []);
     set.add(solution.signature);
     state.dismissedCandidates = [...set];
+    state.favoriteCandidates = (state.favoriteCandidates || []).filter((item) => item !== solution.signature);
     solutions = solutions.filter((item) => item.signature !== solution.signature);
     state.candidateCursor = Math.min(state.candidateCursor || 0, Math.max(0, solutions.length - 1));
     activeSolution = currentSolution();
     state.activeCandidate = activeSolution?.signature || '';
+    if (!solutions.length) {
+      state.candidateCursor = 0;
+      state.candidatePreviewEnabled = false;
+    }
     persistState();
     renderAll();
   }
@@ -1577,9 +1643,17 @@
 
   function clearBaseSchedule() {
     const map = getSelectionMap();
+    const baseCourseIds = new Set(state.baseCourseIds || []);
     for (const [groupId, entry] of Object.entries(map)) {
+      const removedBaseIds = new Set((entry.items || [])
+        .filter((item) => item.source === 'base')
+        .map((item) => item.id));
       entry.items = (entry.items || []).filter((item) => item.source !== 'base');
-      if (entry.lockedItemId && !(entry.items || []).some((item) => item.id === entry.lockedItemId)) {
+      if (entry.lockedItemId && (
+        baseCourseIds.has(entry.lockedItemId)
+        || removedBaseIds.has(entry.lockedItemId)
+        || !(entry.items || []).some((item) => item.id === entry.lockedItemId)
+      )) {
         entry.lockedItemId = '';
       }
       if (!entry.items.length) delete map[groupId];
@@ -1594,12 +1668,17 @@
     renderAll();
   }
 
-  function exportCurrentTimetable() {
+  async function exportCurrentTimetable() {
     const items = activeItems();
+    if (!items.length) {
+      els.estimateText.textContent = '当前没有可导出的课程。';
+      return;
+    }
+    const kind = state.candidatePreviewEnabled ? 'target' : 'current';
     const payload = {
       schemaVersion: HDU.COURSE_SCHEMA_VERSION,
       exportedAt: new Date().toISOString(),
-      source: state.candidatePreviewEnabled ? 'candidate' : 'current',
+      source: kind === 'target' ? 'candidate' : 'current',
       items: items.map((item) => ({
         ...(item.raw || {}),
         schemaVersion: HDU.COURSE_SCHEMA_VERSION,
@@ -1619,16 +1698,20 @@
         xf: item.raw?.xf || item.credits,
       })),
     };
-    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    const stamp = new Date().toISOString().slice(0, 19).replace(/[T:]/g, '-');
-    link.href = url;
-    link.download = `hdu-current-timetable-${stamp}.json`;
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-    URL.revokeObjectURL(url);
+    els.exportCurrent.disabled = true;
+    try {
+      const result = await HDU.fetchJSON('/api/export/timetable', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json; charset=utf-8' },
+        body: JSON.stringify({ kind, payload }),
+      });
+      const label = kind === 'target' ? '目标课表' : '当前课表';
+      els.estimateText.textContent = `${label}已保存到项目目录：${result.path}（${result.count} 个教学班）`;
+    } catch (error) {
+      els.estimateText.textContent = `保存课表失败：${error.message || error}`;
+    } finally {
+      els.exportCurrent.disabled = false;
+    }
   }
 
   function wireEvents() {
@@ -1637,7 +1720,7 @@
       persistState();
       renderCourseList();
     });
-    els.requiredSearch.addEventListener('input', renderRequiredSearchResults);
+    els.lockedSearch.addEventListener('input', renderLockedSearchResults);
     [
       els.minCredit,
       els.maxCredit,
@@ -1646,8 +1729,6 @@
       els.maxLate,
       els.minFreeDays,
       els.blockedTeachers,
-      els.preferredTeachers,
-      els.requiredCourses,
       els.pairRules,
       els.sameTeacherRules,
     ].forEach((element) => element.addEventListener('input', () => {
@@ -1660,6 +1741,9 @@
     els.schemeAddRule.addEventListener('click', addCustomSchemeRule);
     els.clearSelected.addEventListener('click', () => {
       state.selectedGroups = {};
+      state.baseCourseIds = [];
+      state.baseScheduleName = '';
+      state.personalScheduleAutoImported = false;
       clearCandidateState();
       persistState();
       rebuildSelection();
@@ -1727,7 +1811,10 @@
   async function loadCourses() {
     const data = await HDU.fetchJSON(HDU.COURSE_API);
     courses = HDU.normalizeCourseData(data);
+    creditDataAvailable = HDU.hasCreditData(courses);
+    syncCreditAvailability();
     await autoImportPersonalSchedule();
+    applyLegacyCourseLockMigration();
     rebuildSelection();
     await restoreCandidates();
     els.subtitle.textContent = `当前加载 ${courses.length} 个教学班，${HDU.groupCourses(courses).length} 个课组`;

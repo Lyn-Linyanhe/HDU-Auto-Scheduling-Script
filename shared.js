@@ -29,10 +29,10 @@
     maxLate: 5,
     minFreeDays: 0,
     blockedTeachers: '',
-    preferredTeachers: '',
-    requiredCourses: '',
     pairRules: '',
     sameTeacherRules: '',
+    legacyCourseLockText: '',
+    legacyCourseLockWarnings: [],
     selectedGroups: {},
     activeCandidate: '',
     candidateCursor: 0,
@@ -52,6 +52,9 @@
   function loadState() {
     try {
       const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}');
+      const legacyCourseLockText = typeof saved.requiredCourses === 'string' ? saved.requiredCourses : '';
+      delete saved.requiredCourses;
+      delete saved.preferredTeachers;
       if (!saved.timeLimitDefaultsV2 && saved.maxEarly === 1 && saved.maxLunch === 1 && saved.maxLate === 1) {
         saved.maxEarly = 5;
         saved.maxLunch = 5;
@@ -66,6 +69,8 @@
       return {
         ...cloneDefault(),
         ...saved,
+        legacyCourseLockText: saved.legacyCourseLockText || legacyCourseLockText,
+        legacyCourseLockWarnings: Array.isArray(saved.legacyCourseLockWarnings) ? saved.legacyCourseLockWarnings : [],
         selectedGroups: saved.selectedGroups || {},
         favoriteCandidates: saved.favoriteCandidates || [],
         dismissedCandidates: saved.dismissedCandidates || [],
@@ -150,10 +155,13 @@
       for (let week = start; week <= end; week += 1) weeks.add(week);
     }
     const result = weeks.size ? weeks : fullWeeks();
-    if (source.includes('单周')) {
+    // HDU exports use both "单周" and "{1-17周(单)}" forms.
+    const oddWeeks = /单周|\(单\)|\bodd\b/i.test(source);
+    const evenWeeks = /双周|\(双\)|\beven\b/i.test(source);
+    if (oddWeeks) {
       for (const week of [...result]) if (week % 2 === 0) result.delete(week);
     }
-    if (source.includes('双周')) {
+    if (evenWeeks) {
       for (const week of [...result]) if (week % 2 !== 0) result.delete(week);
     }
     return result.size ? result : fullWeeks();
@@ -246,6 +254,10 @@
     });
   }
 
+  function hasCreditData(courses) {
+    return Array.isArray(courses) && courses.some((course) => Number(course?.credits) > 0);
+  }
+
   function groupCourses(courses) {
     const map = new Map();
     for (const course of courses) {
@@ -301,38 +313,69 @@
     ].filter(Boolean).join(' ').toLowerCase();
   }
 
+  const PRACTICAL_SUFFIX_PATTERN = /(课程实践|开发实践|综合实践|课程设计|实验|实践|实训)$/i;
+
   function normalizeCourseTitle(value) {
     return String(value || '')
       .trim()
-      .replace(/[（(]?[一二三四五六七八九十0-9]+[)）]?$/g, '')
+      .replace(/[（(]\s*[甲乙丙丁戊己庚辛壬癸A-H]\s*[)）]\s*$/i, '')
+      .replace(/[（(]?[一二三四五六七八九十0-9]+[)）]?\s*$/g, '')
       .trim()
       .toLowerCase();
   }
 
   function practicalBaseName(value) {
     return normalizeCourseTitle(value)
-      .replace(/(课程实践|开发实践|综合实践|课程设计|实验|实践|实训|设计)$/g, '')
+      .replace(PRACTICAL_SUFFIX_PATTERN, '')
       .trim();
   }
 
   function hasPracticalSuffix(value) {
-    return /(课程实践|开发实践|综合实践|课程设计|实验|实践|实训|设计)$/i.test(normalizeCourseTitle(value));
+    return PRACTICAL_SUFFIX_PATTERN.test(normalizeCourseTitle(value));
   }
 
-  function syntheticRequiredGroup(token, groups, strategy) {
+  function findLinkedCoursePairs(courses, limit = 500) {
+    const groups = groupCourses(courses);
+    const byName = new Map();
+    for (const group of groups) {
+      const key = normalizeCourseTitle(group.name);
+      if (!key) continue;
+      if (!byName.has(key)) byName.set(key, []);
+      byName.get(key).push(group);
+    }
+    const pairs = [];
+    const seen = new Set();
+    for (const group of groups) {
+      const name = normalizeCourseTitle(group.name);
+      if (!hasPracticalSuffix(name)) continue;
+      const base = practicalBaseName(name);
+      if (!base || base === name) continue;
+      for (const main of byName.get(base) || []) {
+        if (main.id === group.id || hasPracticalSuffix(main.name)) continue;
+        const key = [main.id, group.id].sort().join('|');
+        if (seen.has(key)) continue;
+        seen.add(key);
+        pairs.push([main, group]);
+        if (pairs.length >= limit) return pairs;
+      }
+    }
+    return pairs;
+  }
+
+  function syntheticLegacyCourseGroup(token, groups, strategy) {
     const items = groups.flatMap((group) => group.items || []);
     return {
-      id: `required:${strategy}:${token}`,
+      id: `legacy:${strategy}:${token}`,
       name: token,
       items,
       lockedItemId: '',
       optional: false,
       sourceGroups: groups.map((group) => group.id),
-      requiredStrategy: strategy,
+      legacyStrategy: strategy,
     };
   }
 
-  function resolveRequiredCourseGroups(courses, token) {
+  function resolveLegacyCourseGroups(courses, token) {
     const rawToken = String(token || '').trim();
     const lower = rawToken.toLowerCase();
     const normalized = normalizeCourseTitle(rawToken);
@@ -363,7 +406,7 @@
     if (exactNameMatches.length) {
       return {
         token: rawToken,
-        groups: [syntheticRequiredGroup(rawToken, exactNameMatches, 'name')],
+        groups: [syntheticLegacyCourseGroup(rawToken, exactNameMatches, 'name')],
         unresolved: false,
         strategy: 'name',
       };
@@ -378,7 +421,7 @@
       if (practicalMatches.length) {
         return {
           token: rawToken,
-          groups: [syntheticRequiredGroup(rawToken, practicalMatches, 'practical')],
+          groups: [syntheticLegacyCourseGroup(rawToken, practicalMatches, 'practical')],
           unresolved: false,
           strategy: 'practical',
         };
@@ -386,6 +429,32 @@
     }
 
     return { token: rawToken, groups: [], unresolved: true, strategy: 'none' };
+  }
+
+  function migrateLegacyCourseLocks(courses, legacyText) {
+    const matches = [];
+    const unresolved = [];
+    const seen = new Set();
+    for (const token of parseList(legacyText)) {
+      const normalizedToken = token.trim().toLowerCase();
+      const exactItems = courses.filter((course) => [
+        course.id,
+        course.displayCode,
+        course.sectionName,
+        course.rawCourseCode,
+      ].filter(Boolean).some((value) => String(value).trim().toLowerCase() === normalizedToken));
+      const resolved = exactItems.length
+        ? exactItems
+        : resolveLegacyCourseGroups(courses, token).groups.flatMap((group) => group.items || []);
+      const uniqueItems = [...new Map(resolved.filter(Boolean).map((item) => [item.id, item])).values()];
+      if (uniqueItems.length !== 1 || seen.has(uniqueItems[0].id)) {
+        unresolved.push(token);
+        continue;
+      }
+      seen.add(uniqueItems[0].id);
+      matches.push(uniqueItems[0]);
+    }
+    return { matches, unresolved };
   }
 
   function parsePairRules(text) {
@@ -459,8 +528,6 @@
       maxLate: Number(state.maxLate ?? 5),
       minFreeDays: Number(state.minFreeDays ?? 0),
       blockedTeachers: state.blockedTeachers || '',
-      preferredTeachers: state.preferredTeachers || '',
-      requiredCourses: state.requiredCourses || '',
       pairRules: state.pairRules || '',
       sameTeacherRules: state.sameTeacherRules || '',
     };
@@ -471,8 +538,6 @@
     if (credits < constraints.minCredit || credits > constraints.maxCredit) return null;
 
     const blocked = new Set(parseList(constraints.blockedTeachers).map((item) => item.toLowerCase()));
-    const preferred = new Set(parseList(constraints.preferredTeachers).map((item) => item.toLowerCase()));
-    const required = parseList(constraints.requiredCourses).map((item) => item.toLowerCase());
     for (let i = 0; i < items.length; i += 1) {
       for (let j = i + 1; j < items.length; j += 1) {
         if (sameBaseCourse(items[i], items[j])) return null;
@@ -482,10 +547,6 @@
       const teacher = (item.teacher || '').toLowerCase();
       for (const bad of blocked) if (bad && teacher.includes(bad)) return null;
     }
-    for (const need of required) {
-      if (need && !items.some((item) => courseSearchText(item).includes(need))) return null;
-    }
-
     const metrics = countMetrics(items);
     if (metrics.earlyDays > constraints.maxEarly || metrics.lunchDays > constraints.maxLunch || metrics.lateDays > constraints.maxLate) return null;
 
@@ -515,10 +576,6 @@
       if (!matched) return null;
     }
 
-    for (const item of items) {
-      const teacher = (item.teacher || '').toLowerCase();
-      for (const good of preferred) if (good && teacher.includes(good)) score -= 3;
-    }
     return { items: [...items], credits, metrics, score };
   }
 
@@ -691,30 +748,64 @@
     const constraints = constraintsFromState(state);
     const ordered = orderedGroups(groups || []);
     const reasons = [];
-    const add = (type, text) => {
-      if (text && !reasons.some((item) => item.text === text)) reasons.push({ type, text });
+    const add = (type, text, action = '') => {
+      if (text && !reasons.some((item) => item.text === text)) reasons.push({ type, text, action });
     };
 
-    for (const token of context.unresolvedRequired || []) {
-      add('required', `必选课程“${token}”没有匹配到全校课表中的课程，请改用课程号或从搜索结果添加。`);
-    }
     if (!ordered.length) {
-      add('course', '当前没有可参与组合的课组，请先添加已选课、锁定课或必选课程。');
+      add('course', '当前没有可参与组合的课组。', '请先添加已选课或锁定课组。');
       return reasons;
     }
 
     for (const group of ordered) {
       const optionCount = optionsForGroup(group).length;
-      if (!optionCount) add('course', `课组“${group.name || group.id}”没有可选教学班。`);
+      if (!optionCount) add('course', `课组“${group.name || group.id}”没有可选教学班。`, '请移除该课组约束，或重新导入更完整的 course.json。');
     }
 
     const locked = ordered.map(lockedItemForGroup).filter(Boolean);
     for (let i = 0; i < locked.length; i += 1) {
       for (let j = i + 1; j < locked.length; j += 1) {
         if (sameBaseCourse(locked[i], locked[j])) {
-          add('locked', `锁定课程“${locked[i].courseName}”和“${locked[j].courseName}”属于同一课程号，只能保留一个教学班。`);
+          add(
+            'locked',
+            `锁定课程“${locked[i].courseName}”和“${locked[j].courseName}”属于同一课程号，只能保留一个教学班。`,
+            '请取消其中一个锁定，或只保留一个教学班。',
+          );
         } else if (courseConflict(locked[i], locked[j])) {
-          add('locked', `锁定课程“${locked[i].courseName}”和“${locked[j].courseName}”存在时间冲突。`);
+          add(
+            'locked',
+            `锁定课程“${locked[i].courseName}”和“${locked[j].courseName}”存在时间冲突。`,
+            '请取消其中一个锁定，或换成不冲突的教学班。',
+          );
+        }
+      }
+    }
+
+    const mandatoryGroups = ordered.filter((group) => group.lockedItemId || group.optional === false);
+    for (let i = 0; i < mandatoryGroups.length; i += 1) {
+      for (let j = i + 1; j < mandatoryGroups.length; j += 1) {
+        const leftOptions = optionsForGroup(mandatoryGroups[i]).filter(Boolean);
+        const rightOptions = optionsForGroup(mandatoryGroups[j]).filter(Boolean);
+        if (!leftOptions.length || !rightOptions.length) continue;
+        let sameBase = 0;
+        let timeConflict = 0;
+        let total = 0;
+        for (const left of leftOptions) {
+          for (const right of rightOptions) {
+            total += 1;
+            if (sameBaseCourse(left, right)) sameBase += 1;
+            else if (courseConflict(left, right)) timeConflict += 1;
+          }
+        }
+        if (total && sameBase + timeConflict === total) {
+          const leftName = mandatoryGroups[i].name || mandatoryGroups[i].id;
+          const rightName = mandatoryGroups[j].name || mandatoryGroups[j].id;
+          const kind = sameBase === total ? '同一课程号重复' : timeConflict === total ? '时间全部冲突' : '同课程号或时间互斥';
+          add(
+            'conflict',
+            `强制保留课组“${leftName}”和“${rightName}”无法同时满足：${kind}。`,
+            '请取消其中一个锁定，或为其中一门课补充更多可选教学班。',
+          );
         }
       }
     }
@@ -722,10 +813,18 @@
     const minPossibleCredit = ordered.reduce((sum, group) => sum + minGroupCredit(group), 0);
     const maxPossibleCredit = ordered.reduce((sum, group) => sum + maxGroupCredit(group), 0);
     if (maxPossibleCredit < constraints.minCredit) {
-      add('credit', `当前可选课程最多约 ${maxPossibleCredit.toFixed(2)} 学分，低于学分下限 ${constraints.minCredit.toFixed(2)}。`);
+      add(
+        'credit',
+        `当前可选课程最多约 ${maxPossibleCredit.toFixed(2)} 学分，低于学分下限 ${constraints.minCredit.toFixed(2)}。`,
+        '请降低学分下限，或添加更多已选课组。',
+      );
     }
     if (minPossibleCredit > constraints.maxCredit) {
-      add('credit', `当前必选/锁定部分至少约 ${minPossibleCredit.toFixed(2)} 学分，超过学分上限 ${constraints.maxCredit.toFixed(2)}。`);
+      add(
+        'credit',
+        `当前锁定部分至少约 ${minPossibleCredit.toFixed(2)} 学分，超过学分上限 ${constraints.maxCredit.toFixed(2)}。`,
+        '请提高学分上限，或减少锁定课程。',
+      );
     }
 
     const blocked = parseList(constraints.blockedTeachers).map((item) => item.toLowerCase());
@@ -736,7 +835,13 @@
           const teacher = (option.teacher || '').toLowerCase();
           return !blocked.some((bad) => bad && teacher.includes(bad));
         });
-        if (!viable.length) add('teacher', `“${group.name || group.id}”的可选教学班都被排除教师条件过滤掉了。`);
+        if (!viable.length) {
+          add(
+            'teacher',
+            `“${group.name || group.id}”的可选教学班都被排除教师条件过滤掉了。`,
+            '请删减排除教师，或取消该课程的锁定。',
+          );
+        }
       }
     }
 
@@ -746,31 +851,35 @@
       maxLate: 5,
       minFreeDays: 0,
     })) {
-      add('time', '放宽早八、午间压缩、晚课或全天无课限制后可以找到方案，说明时间级约束过紧。');
+      add('time', '放宽早八、午间压缩、晚课或全天无课限制后可以找到方案，说明时间级约束过紧。', '请优先放宽最少全天无课天数、最多早八天数或最多晚课天数。');
     }
 
     if (!reasons.length && relaxedHasSolution(ordered, state, {
       pairRules: '',
       sameTeacherRules: '',
     })) {
-      add('scheme', '移除方案级约束后可以找到方案，说明强制一起或教师一致规则过紧。');
+      add('scheme', '移除方案级约束后可以找到方案，说明强制一起或教师一致规则过紧。', '请检查“教师一致”和“强制一起”是否确实必要。');
     }
 
     if (!reasons.length && blocked.length && relaxedHasSolution(ordered, state, {
       blockedTeachers: '',
     })) {
-      add('teacher', '移除排除教师后可以找到方案，说明排除教师条件过紧。');
+      add('teacher', '移除排除教师后可以找到方案，说明排除教师条件过紧。', '请减少排除教师，或检查教师一致规则。');
     }
 
     if (!reasons.length && relaxedHasSolution(ordered, state, {
       minCredit: 0,
       maxCredit: 45,
     })) {
-      add('credit', '放宽学分上下限后可以找到方案，说明学分范围过窄。');
+      add('credit', '放宽学分上下限后可以找到方案，说明学分范围过窄。', '请扩大总学分范围后重新生成。');
     }
 
     if (!reasons.length) {
-      add('unknown', '在当前课组集合中没有找到无冲突组合，可能是课程时间冲突、同课程号重复，或多个约束叠加导致。');
+      add(
+        'unknown',
+        '在当前课组集合中没有找到无冲突组合，可能是课程时间冲突、同课程号重复，或多个约束叠加导致。',
+        '建议先只保留锁定课程和一两个已选课程生成，再逐步加回约束。',
+      );
     }
 
     return reasons.slice(0, 8);
@@ -802,12 +911,18 @@
     fetchJSON,
     firstText,
     normalizeCourseData,
+    hasCreditData,
     parseSchedule,
     parseList,
     parsePairRules,
     baseCourseCode,
     courseSearchText,
-    resolveRequiredCourseGroups,
+    normalizeCourseTitle,
+    practicalBaseName,
+    hasPracticalSuffix,
+    findLinkedCoursePairs,
+    resolveLegacyCourseGroups,
+    migrateLegacyCourseLocks,
     groupCourses,
     filterCourses,
     countMetrics,
@@ -818,6 +933,7 @@
     courseConflict,
     sameBaseCourse,
     lockedConstraintConflict,
+    evaluateSolution,
     splitTeachers,
     courseLabel,
   };

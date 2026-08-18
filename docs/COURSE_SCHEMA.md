@@ -2,6 +2,13 @@
 
 排课助手内部统一使用 `HDU.COURSE_SCHEMA_VERSION = 1`。无论课程来自新教务接口、Excel、个人课表 JSON，还是用户导出的当前课表，都先归一化为同一结构再参与展示、冲突判断和候选生成。
 
+## 文件边界
+
+- `course.json` 是持久化的全校课程输入；现有可解析 JSON 优先于 Excel。
+- 当前 Excel 输入边界是 `.xlsx`，表头至少需要“教学班名称”和“课程名称”；旧式 `.xls` 不属于当前支持范围。
+- Excel 生成或修复只发生在程序启动初始化或明确的导出/修复流程。读取 `/api/status`、`/api/course` 或刷新页面不会写入课程文件，也不会生成 `.incomplete-*.json` 备份。
+- 浏览器端通过 `normalizeCourseData` 生成 `CanonicalCourse`。持久化 `items` 可以保留学校接口和 Excel 原始字段，`raw` 用于追踪来源；页面和排课算法只依赖 canonical 字段。
+
 ## CanonicalCourse
 
 ```json
@@ -48,6 +55,8 @@
 - `timeText`：原始时间文本。
 - `meetings`：结构化时间段，供冲突检测使用。
 - `raw`：原始数据，便于导出和追踪。
+
+课程号显示规则：如果学校接口的 `kch_id` 是长十六进制内部 ID，但 `jxbmc` 包含完整教学班号，则 `displayCode` 使用 `jxbmc` 中的可读教学班号，内部 ID 仍保留在 `rawCourseCode`/`raw` 中。学分按数字解析并保留 `0.25` 等小数值。
 
 ## 为什么需要 schema
 

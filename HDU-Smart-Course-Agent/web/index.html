@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>HDU 智能选课执行助手</title>
+  <link rel="stylesheet" href="/style.css" />
+  <link rel="icon" href="data:," />
+</head>
+<body>
+  <header class="topbar">
+    <div>
+      <div class="eyebrow">HDU Smart Course Agent</div>
+      <h1>HDU 智能选课执行助手</h1>
+      <p id="status-message" class="muted" role="status" aria-live="polite" aria-atomic="true">正在检查本地数据。</p>
+    </div>
+      <div class="actions top-actions">
+        <span id="term" class="badge">学期 -</span>
+        <a class="ghost-btn icon-text-btn" href="http://127.0.0.1:6789/" target="_blank" rel="noopener">打开主站</a>
+        <button id="settings-toggle" class="ghost-btn icon-text-btn" type="button">设置</button>
+      <button id="refresh" class="ghost-btn icon-text-btn" type="button">刷新</button>
+      <button id="stage-primary" class="primary-btn" type="button" disabled>导入目标课表</button>
+    </div>
+  </header>
+
+  <aside id="settings-drawer" class="settings-drawer" aria-hidden="true" inert>
+    <div class="drawer-backdrop" data-close-settings></div>
+    <section class="drawer-content" role="dialog" aria-modal="true" aria-labelledby="settings-title" aria-describedby="settings-description">
+      <div class="panel-head">
+        <div>
+          <h2 id="settings-title">项目设置</h2>
+          <p id="settings-description" class="muted">仅在自动检测不到项目时修改。</p>
+        </div>
+        <button id="settings-close" class="ghost-btn icon-text-btn" type="button">关闭</button>
+      </div>
+      <span id="settings-path" class="badge">自动检测</span>
+      <div class="path-form">
+        <label><span>排课助手目录</span><input id="scheduler-dir" type="text" placeholder="留空则自动检测" /></label>
+        <label><span>HDU-KillCourse 目录</span><input id="killcourse-dir" type="text" placeholder="留空则自动检测" /></label>
+      </div>
+      <div class="actions drawer-actions">
+        <button id="save-settings" class="primary-btn" type="button">保存路径</button>
+        <button id="clear-settings" class="ghost-btn" type="button">恢复自动检测</button>
+      </div>
+    </section>
+  </aside>
+
+  <nav class="stage-nav" aria-label="执行步骤" role="tablist">
+    <button id="stage-tab-1" class="stage-tab" data-stage="1" type="button" role="tab" aria-selected="true" aria-controls="stage-panel-1"><b>1</b><span>确认数据</span></button>
+    <button id="stage-tab-2" class="stage-tab" data-stage="2" type="button" role="tab" aria-selected="false" aria-controls="stage-panel-2" disabled><b>2</b><span>确认计划</span></button>
+    <button id="stage-tab-3" class="stage-tab" data-stage="3" type="button" role="tab" aria-selected="false" aria-controls="stage-panel-3" disabled><b>3</b><span>执行准备</span></button>
+    <button id="stage-tab-4" class="stage-tab" data-stage="4" type="button" role="tab" aria-selected="false" aria-controls="stage-panel-4" disabled><b>4</b><span>结果与替代方案</span></button>
+  </nav>
+
+  <main class="workflow">
+    <section id="stage-panel-1" class="stage-panel" data-stage-panel="1" role="tabpanel" aria-labelledby="stage-tab-1" tabindex="-1">
+      <div class="stage-heading">
+        <div><span class="stage-kicker">第一步</span><h2>确认数据</h2></div>
+        <p>确认当前课表和目标课表后，才能生成可靠的选退课计划。</p>
+      </div>
+
+      <div id="status-grid" class="status-grid compact-status"></div>
+
+      <div class="data-grid">
+        <section class="work-block">
+          <div class="work-head"><div><h3>当前个人课表</h3><span id="current-count" class="badge">0 门</span></div></div>
+          <p class="muted">涉及退课时，执行前需要导入最新个人课表快照。</p>
+          <div class="sync-controls" aria-describedby="live-refresh-status">
+            <div class="sync-control-actions">
+              <button id="refresh-live" class="primary-btn" type="button">立即刷新</button>
+              <label class="check-row sync-toggle"><input id="auto-refresh" type="checkbox" checked /> 自动刷新</label>
+              <label class="interval-control"><span>间隔</span><input id="refresh-interval" type="number" min="10" max="7200" step="1" value="60" inputmode="numeric" /><span>秒</span></label>
+            </div>
+            <div id="live-refresh-status" class="sync-status-grid" role="status" aria-live="polite" aria-atomic="true">
+              <div><span>来源</span><strong id="live-source">尚未刷新</strong></div>
+              <div><span>上次刷新</span><time id="last-refresh-at">未刷新</time></div>
+              <div><span>下次刷新</span><time id="next-refresh-at">未计划</time></div>
+            </div>
+          </div>
+          <label class="file-drop"><input id="live-file" type="file" accept=".json,application/json" /><span>导入最新个人课表 JSON</span></label>
+          <div id="live-sync-summary" class="readiness-summary empty">尚未导入真实课表快照。</div>
+          <p id="live-refresh-error" class="course-warning" hidden></p>
+          <details class="detail-drawer"><summary>查看当前课表与同步差异</summary><div id="current-list" class="course-list empty">尚未读取个人课表。</div><div id="live-sync-diff" class="course-list empty">尚未导入真实课表快照。</div></details>
+          <span id="live-sync-badge" class="visually-hidden">未同步</span>
+        </section>
+
+        <section class="work-block">
+          <div class="work-head"><div><h3>目标课表</h3><span id="target-count" class="badge">未导入</span></div></div>
+          <p class="muted">从排课助手导入你最终满意的目标课表。</p>
+          <div id="target-meta" class="schedule-meta" aria-live="polite" aria-atomic="true">
+            <div><span>来源</span><strong id="target-source">尚未自动发现</strong></div>
+            <div><span>文件更新时间</span><time id="target-updated-at">未发现</time></div>
+          </div>
+          <p id="target-warning" class="course-warning" hidden></p>
+          <label class="file-drop"><input id="target-file" type="file" accept=".json,application/json" /><span>导入目标课表 JSON</span></label>
+          <details class="detail-drawer"><summary>查看目标课程</summary><div id="target-preview" class="course-list empty">尚未导入目标课表。</div></details>
+        </section>
+      </div>
+
+      <section class="work-block course-intel-block">
+        <div class="panel-head">
+          <div>
+            <h3>课程数据与教学班</h3>
+            <p id="course-intel-summary" class="muted">正在读取课程能力和人数快照。</p>
+          </div>
+          <span id="course-intel-badge" class="badge">读取中</span>
+        </div>
+        <div class="course-intel-controls">
+          <label>
+            <span>筛选课程</span>
+            <input id="course-option-filter" type="search" placeholder="按名称、课程号或教师筛选" />
+          </label>
+          <label>
+            <span>选择教学班</span>
+            <select id="course-option-select" aria-label="选择教学班" disabled>
+              <option value="">等待课程库</option>
+            </select>
+          </label>
+          <button id="course-schedule-query" class="ghost-btn" type="button" disabled>查看教学班课表</button>
+        </div>
+        <div id="course-intel-detail" class="course-intel-detail empty">课程数据加载后显示能力、轮次和人数。</div>
+        <div id="course-capacity-summary" class="readiness-summary empty">容量和人数来自当前 course.json 快照，缺失时保持未知。</div>
+        <div id="class-schedule-result" class="course-schedule-result empty">选择教学班后可查看同课程号的教学班课表。</div>
+      </section>
+    </section>
+
+    <section id="stage-panel-2" class="stage-panel" data-stage-panel="2" role="tabpanel" aria-labelledby="stage-tab-2" tabindex="-1" hidden>
+      <div class="stage-heading"><div><span class="stage-kicker">第二步</span><h2>确认计划</h2></div><p>确认哪些课程需要选入或退掉，再进入执行准备。</p></div>
+      <section class="work-block plan-main">
+        <div class="panel-head"><h3>选退课计划</h3><span id="plan-state" class="badge">等待生成</span></div>
+        <div id="plan-summary" class="summary-grid"></div>
+        <div class="plan-columns">
+          <div><h3>需要选课</h3><div id="select-list" class="course-list empty">暂无</div></div>
+          <div><h3>需要退课</h3><div id="drop-list" class="course-list empty danger-list">暂无</div></div>
+        </div>
+        <p id="keep-summary" class="muted">保留课程将在详情中显示。</p>
+      </section>
+      <details class="detail-drawer"><summary>查看计划细节、风险与备选教学班</summary>
+        <div class="details-grid"><div><h3>保留课程</h3><div id="keep-list" class="course-list empty">暂无</div></div><div><h3>备选教学班</h3><div id="fallback-list" class="course-list empty">生成计划后显示。</div></div><div><h3>风险提示</h3><div id="risk-list" class="course-list empty danger-list">生成计划后显示。</div></div></div>
+        <div class="details-grid two"><div><h3>校验结果</h3><div id="validation-list" class="course-list empty">生成计划后显示。</div></div><div><h3>计划解释</h3><div id="explanation-list" class="course-list empty">生成计划后显示。</div></div></div>
+      </details>
+    </section>
+
+    <section id="stage-panel-3" class="stage-panel" data-stage-panel="3" role="tabpanel" aria-labelledby="stage-tab-3" tabindex="-1" hidden>
+      <div class="stage-heading"><div><span class="stage-kicker">第三步</span><h2>执行准备</h2></div><p>安全检查、确认和启动包生成均不会直接执行选课或退课。</p></div>
+      <section class="work-block safety-block">
+        <div class="panel-head"><h3>安全检查</h3><span id="dry-run-badge" class="badge">未检查</span></div>
+        <p id="dry-run-summary" class="readiness-summary empty">确认写入执行配置后，才可进行安全检查。</p>
+        <label class="check-row config-confirm"><input id="write-config" type="checkbox" /> 我确认将本计划写入 KillCourse/config.json，用于后续手动执行</label>
+        <input id="write-action" type="checkbox" checked class="visually-hidden" />
+        <div class="actions"><button id="dry-run" class="primary-btn" type="button" disabled>更新配置并运行安全检查</button></div>
+        <details class="detail-drawer"><summary>查看安全检查细节与配置差异</summary><div id="readiness-summary" class="readiness-summary empty">生成计划后显示。</div><div id="readiness-list" class="course-list empty">生成计划后显示。</div><div id="dry-run-command" class="command-line empty">等待安全检查。</div><div id="dry-run-events" class="course-list empty">等待安全检查。</div><div id="config-summary" class="summary-grid"></div><div class="details-grid two"><div><h3>保留配置</h3><div id="config-preserve-list" class="course-list empty">生成计划后显示。</div></div><div><h3>课程动作变更</h3><div id="config-action-list" class="course-list empty">生成计划后显示。</div></div></div></details>
+      </section>
+      <section class="work-block confirm-block">
+        <h3>人工确认</h3>
+        <p id="confirm-hint" class="muted" role="status" aria-live="polite" aria-atomic="true">安全检查通过后，才会显示确认短语。</p>
+        <div class="confirm-row"><label class="visually-hidden" for="confirm-phrase">确认短语</label><input id="confirm-phrase" type="text" aria-describedby="confirm-hint" placeholder="等待安全检查通过" /><button id="authorize-execution" class="primary-btn" type="button" disabled>生成授权票据</button><button id="build-package" class="ghost-btn" type="button" disabled>生成启动包</button></div>
+        <div id="authorization-result" class="readiness-summary empty">尚未生成授权票据。</div>
+        <div id="package-result" class="readiness-summary empty">尚未生成启动包。</div>
+      </section>
+    </section>
+
+    <section id="stage-panel-4" class="stage-panel" data-stage-panel="4" role="tabpanel" aria-labelledby="stage-tab-4" tabindex="-1" hidden>
+      <div class="stage-heading"><div><span class="stage-kicker">第四步</span><h2>结果与替代方案</h2></div><p>手动执行后解析结果；失败课程只会推荐方案，不会自动替换或执行。</p></div>
+      <section class="work-block">
+        <div class="panel-head"><h3>执行结果</h3><div class="actions"><label class="check-row"><input id="write-execution-log" type="checkbox" checked /> 保存执行日志</label><button id="parse-log" class="primary-btn" type="button" disabled>解析执行日志</button></div></div>
+        <div id="execution-log-summary" class="readiness-summary empty">生成启动包并手动执行后，可解析 KillCourse 日志。</div>
+        <div id="execution-log-list" class="course-list empty">尚未解析执行结果。</div>
+      </section>
+      <section class="work-block">
+        <div class="panel-head"><h3>失败课程替代方案</h3><div class="actions"><label class="check-row"><input id="write-fallback-recommendations" type="checkbox" checked /> 保存推荐结果</label><button id="build-fallback-recommendations" class="ghost-btn" type="button" disabled>生成替代方案</button></div></div>
+        <div id="fallback-recommendation-summary" class="readiness-summary empty">解析执行日志后，可为选课失败课程推荐可行教学班。</div>
+        <div id="fallback-recommendation-list" class="course-list empty">尚未生成替代方案。</div>
+      </section>
+      <details class="detail-drawer"><summary>下载计划与配置文件</summary><div class="actions"><button id="download-plan" class="ghost-btn" type="button" disabled>下载 action-plan.json</button><button id="download-config" class="ghost-btn" type="button" disabled>下载 config.json</button></div><pre id="output-json" class="output-json">{}</pre></details>
+    </section>
+  </main>
+
+  <script src="/app.js"></script>
+</body>
+</html>

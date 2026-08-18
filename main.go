@@ -12,6 +12,7 @@ import (
 	"path"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 
@@ -25,12 +26,19 @@ const addr = "127.0.0.1:6789"
 const maxImportBytes = 50 << 20
 const maxExportRequestBytes = 1 << 20
 
+type scheduleExportRequest struct {
+	Kind    string          `json:"kind"`
+	Payload json.RawMessage `json:"payload"`
+}
+
 type appState struct {
 	service *school.Service
 }
 
 func main() {
+	listenAddr, listenPort := mainListenAddress()
 	state := &appState{service: school.NewService()}
+	initializeCourseFile()
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", serveStatic)
@@ -39,22 +47,50 @@ func main() {
 	mux.HandleFunc("/api/course", handleCourse)
 	mux.HandleFunc("/api/personal-schedule", handlePersonalSchedule)
 	mux.HandleFunc("/api/bootstrap/import", handleImport)
+	mux.HandleFunc("/api/export/timetable", handleScheduleExport)
 	mux.HandleFunc("/api/export", handleExport(state))
+	mux.HandleFunc("/api/export/personal-schedule", handlePersonalScheduleRefresh(state))
 	mux.HandleFunc("/api/export/status", handleExportStatus(state))
 	mux.HandleFunc("/api/export/open-output", handleOpenOutput(state))
 
 	if os.Getenv("HDU_NO_BROWSER") != "1" {
-		go openBrowser("http://" + addr + "/")
+		go openBrowser("http://" + listenAddr + "/")
 	}
 
-	fmt.Println("HDU Auto Scheduling Assistant running at http://" + addr)
+	fmt.Println("HDU Auto Scheduling Assistant running at http://" + listenAddr)
 	server := &http.Server{
-		Addr:              addr,
-		Handler:           withLocalCORS(mux, "6789"),
+		Addr:              listenAddr,
+		Handler:           withLocalCORS(mux, listenPort),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 	if err := server.ListenAndServe(); err != nil {
 		panic(err)
+	}
+}
+
+func mainListenAddress() (string, string) {
+	const defaultPort = "6789"
+	port := strings.TrimSpace(os.Getenv("HDU_MAIN_PORT"))
+	parsed, err := strconv.Atoi(port)
+	if err != nil || parsed < 1 || parsed > 65535 {
+		return addr, defaultPort
+	}
+	return "127.0.0.1:" + port, port
+}
+
+func initializeCourseFile() {
+	coursePath, err := school.EnsureOutputFilePath("course.json")
+	if err != nil {
+		fmt.Println("Course data path initialization skipped:", err)
+		return
+	}
+	_, source, err := school.EnsureCourseFile(coursePath)
+	if err != nil {
+		fmt.Println("Course data initialization skipped:", err)
+		return
+	}
+	if source != "json" {
+		fmt.Println("Course data initialized from", source)
 	}
 }
 
@@ -138,12 +174,22 @@ func handleStatus(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	payload, source, err := school.EnsureCourseFile("course.json")
+	coursePath, err := school.OutputFilePath("course.json")
 	if err != nil {
 		writeJSON(w, school.StatusResponse{Ready: false, Message: err.Error()})
 		return
 	}
-	personalCount, personalErr := readPersonalScheduleCount("personal-schedule.json")
+	personalPath, err := school.OutputFilePath("personal-schedule.json")
+	if err != nil {
+		writeJSON(w, school.StatusResponse{Ready: false, Message: err.Error()})
+		return
+	}
+	payload, err := school.ReadCourseFile(coursePath)
+	if err != nil {
+		writeJSON(w, school.StatusResponse{Ready: false, Message: err.Error()})
+		return
+	}
+	personalCount, personalErr := readPersonalScheduleCount(personalPath)
 	if personalErr != nil {
 		writeJSON(w, school.StatusResponse{
 			Ready:               true,
@@ -157,13 +203,8 @@ func handleStatus(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
-	message := ""
-	if source != "json" {
-		message = "已从 " + source + " 生成 course.json"
-	}
 	writeJSON(w, school.StatusResponse{
 		Ready:            true,
-		Message:          message,
 		Count:            len(payload.Items),
 		CourseName:       school.InferCourseName(payload.Items),
 		FileName:         "course.json",
@@ -185,13 +226,13 @@ func readPersonalScheduleCount(name string) (int, error) {
 		if payload.Items == nil {
 			return 0, fmt.Errorf("personal-schedule.json 为空或缺少 items")
 		}
-		return len(payload.Items), nil
+		return len(school.MergePersonalScheduleItems(payload.Items)), nil
 	}
 	var list []map[string]any
 	if err := json.Unmarshal(data, &list); err != nil {
 		return 0, err
 	}
-	return len(list), nil
+	return len(school.MergePersonalScheduleItems(list)), nil
 }
 
 func handleCourse(w http.ResponseWriter, r *http.Request) {
@@ -199,11 +240,12 @@ func handleCourse(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	if _, _, err := school.EnsureCourseFile("course.json"); err != nil {
-		http.Error(w, err.Error(), http.StatusNotFound)
+	path, err := school.OutputFilePath("course.json")
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	data, err := os.ReadFile("course.json")
+	data, err := school.ReadCourseFileBytes(path)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusNotFound)
 		return
@@ -217,7 +259,12 @@ func handlePersonalSchedule(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	data, err := os.ReadFile("personal-schedule.json")
+	path, err := school.OutputFilePath("personal-schedule.json")
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	data, err := os.ReadFile(path)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusNotFound)
 		return
@@ -236,7 +283,7 @@ func handlePersonalSchedule(w http.ResponseWriter, r *http.Request) {
 	if raw.Items == nil {
 		raw.Items = []map[string]any{}
 	}
-	writeJSON(w, map[string]any{"items": raw.Items})
+	writeJSON(w, map[string]any{"items": school.MergePersonalScheduleItems(raw.Items)})
 }
 
 func handleImport(w http.ResponseWriter, r *http.Request) {
@@ -255,7 +302,12 @@ func handleImport(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	if err := os.WriteFile("course.json", body, 0644); err != nil {
+	path, err := school.EnsureOutputFilePath("course.json")
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if err := school.WriteCourseFile(path, body); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -264,6 +316,76 @@ func handleImport(w http.ResponseWriter, r *http.Request) {
 		"count":      len(payload.Items),
 		"courseName": school.InferCourseName(payload.Items),
 	})
+}
+
+func handleScheduleExport(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, maxImportBytes)
+	var request scheduleExportRequest
+	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if len(request.Payload) == 0 {
+		http.Error(w, "payload is required", http.StatusBadRequest)
+		return
+	}
+	payload, err := school.DecodeCoursePayload(request.Payload)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	kind := strings.ToLower(strings.TrimSpace(request.Kind))
+	fileName, source, err := scheduleExportDestination(kind)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	var document map[string]any
+	if err := json.Unmarshal(request.Payload, &document); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	document["schemaVersion"] = school.CourseSchemaVersion
+	document["source"] = source
+	document["exportedAt"] = time.Now().Format(time.RFC3339)
+	data, err := json.MarshalIndent(document, "", "  ")
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	outputPath, err := school.EnsureOutputFilePath(fileName)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if err := school.WriteCourseFile(outputPath, data); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, map[string]any{
+		"ok":       true,
+		"kind":     kind,
+		"source":   source,
+		"fileName": fileName,
+		"path":     outputPath,
+		"count":    len(payload.Items),
+	})
+}
+
+func scheduleExportDestination(kind string) (string, string, error) {
+	switch kind {
+	case "target", "candidate":
+		return "target-schedule.json", "candidate", nil
+	case "current":
+		return "hdu-current-timetable.json", "current", nil
+	default:
+		return "", "", fmt.Errorf("unsupported timetable export kind %q", kind)
+	}
 }
 
 func handleExport(state *appState) http.HandlerFunc {
@@ -287,6 +409,7 @@ func handleExport(state *appState) http.HandlerFunc {
 			"ok":                  true,
 			"count":               result.Count,
 			"courseName":          result.CourseName,
+			"courseSource":        result.CourseSource,
 			"fileName":            result.FileName,
 			"outputPath":          result.OutputPath,
 			"personalCount":       result.PersonalCount,
@@ -297,6 +420,22 @@ func handleExport(state *appState) http.HandlerFunc {
 			"message":             "课程数据导出完成",
 			"status":              state.service.Status(),
 		})
+	}
+}
+
+func handlePersonalScheduleRefresh(state *appState) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		if err := state.service.StartPersonalScheduleRefresh(); err != nil {
+			w.WriteHeader(http.StatusConflict)
+			writeJSON(w, map[string]any{"ok": false, "error": err.Error(), "status": state.service.Status()})
+			return
+		}
+		w.WriteHeader(http.StatusAccepted)
+		writeJSON(w, map[string]any{"ok": true, "message": "个人课表刷新已开始", "status": state.service.Status()})
 	}
 }
 
@@ -319,7 +458,7 @@ func handleOpenOutput(state *appState) http.HandlerFunc {
 		status := state.service.Status()
 		outputPath := strings.TrimSpace(status.OutputPath)
 		if outputPath == "" {
-			outputPath, _ = filepath.Abs("course.json")
+			outputPath, _ = school.OutputFilePath("course.json")
 		}
 		if err := openOutputPath(outputPath); err != nil {
 			writeJSON(w, map[string]any{"ok": false, "error": err.Error(), "path": outputPath})

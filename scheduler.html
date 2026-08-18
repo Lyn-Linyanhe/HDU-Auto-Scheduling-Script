@@ -15,6 +15,7 @@
     </div>
     <div class="topbar-actions">
       <a class="ghost-btn" href="/exporter/">导出/更新课程</a>
+      <a class="ghost-btn" href="http://127.0.0.1:6899/" target="_blank" rel="noopener">打开 HDU 智能选课执行助手</a>
       <button class="primary-btn" id="reload-course">重新读取 course.json</button>
     </div>
   </header>
@@ -36,7 +37,9 @@
         <button class="primary-btn small" id="table-candidate-preview">显示此方案</button>
         <button class="ghost-btn small" id="table-candidate-return">返回原课表</button>
       </div>
-      <div id="timetable" class="timetable"></div>
+      <div id="timetable-scroll" class="timetable-scroll" role="region" aria-label="完整周课表">
+        <div id="timetable" class="timetable"></div>
+      </div>
     </section>
 
     <aside class="side-column">
@@ -89,25 +92,25 @@
         <section class="constraint-block">
           <h3>课程级约束</h3>
           <div class="control-grid">
-            <label><span>学分下限</span><input id="min-credit" type="number" min="0" step="0.5" /></label>
-            <label><span>学分上限</span><input id="max-credit" type="number" min="0" max="45" step="0.5" /></label>
-            <textarea id="required-courses" class="hidden-state-field" readonly aria-hidden="true"></textarea>
-            <div class="quick-constraint-box required-picked-box">
-              <span>已加入必选</span>
-              <div id="required-selected-picks" class="required-selected-picks"></div>
+            <label><span>学分下限</span><input id="min-credit" type="number" min="0" step="0.25" /></label>
+            <label><span>学分上限</span><input id="max-credit" type="number" min="0" max="45" step="0.25" /></label>
+            <div id="credit-data-warning" class="credit-data-warning" hidden>当前课程数据不含学分，已暂时关闭学分约束；请将带“学分”列的课程 Excel 放入当前目录后重新启动。</div>
+            <div class="quick-constraint-box locked-picked-box">
+              <span>已锁定教学班</span>
+              <div id="locked-selected-picks" class="locked-selected-picks"></div>
             </div>
             <div class="quick-constraint-box">
-              <span>从已选课程快速添加</span>
-              <div id="required-quick-picks" class="quick-picks"></div>
+              <span>从已选课程快速锁定</span>
+              <div id="locked-quick-picks" class="quick-picks"></div>
             </div>
-            <div class="quick-constraint-box required-search-box">
-              <span>搜索全体课程添加必选</span>
-              <input id="required-search" class="constraint-search" placeholder="课程名称、课程编号" />
-              <div id="required-search-results" class="required-search-results"></div>
+            <div class="quick-constraint-box locked-search-box">
+              <span>搜索全体课程并锁定</span>
+              <input id="locked-search" class="constraint-search" placeholder="课程名称、课程编号或教学班" />
+              <div id="locked-search-results" class="locked-search-results"></div>
             </div>
+            <div id="legacy-course-lock-warning" class="constraint-warning" role="status" aria-live="polite" hidden></div>
             <div class="teacher-row">
               <label><span>排除教师</span><textarea id="blocked-teachers" rows="3" placeholder="多个教师用换行或逗号分隔"></textarea></label>
-              <label><span>偏好教师</span><textarea id="preferred-teachers" rows="3" placeholder="多个教师用换行或逗号分隔"></textarea></label>
             </div>
           </div>
         </section>
@@ -141,7 +144,7 @@
               <input id="scheme-left-course" class="constraint-search" placeholder="课程名称或课程号" />
               <select id="scheme-mode" class="constraint-select">
                 <option value="pair">强制一起</option>
-                <option value="teacher">教师一致</option>
+                <option value="teacher" selected>教师一致</option>
               </select>
               <input id="scheme-right-course" class="constraint-search" placeholder="课程名称或课程号" />
               <button id="scheme-add-rule" class="primary-btn small" type="button">加入约束</button>

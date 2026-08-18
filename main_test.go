@@ -1,6 +1,8 @@
 package main
 
 import (
+	"archive/zip"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	neturl "net/url"
@@ -8,6 +10,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"hdu-scheduler/school"
 )
 
 func TestAllowedLocalOrigin(t *testing.T) {
@@ -35,6 +39,26 @@ func TestAllowedLocalOrigin(t *testing.T) {
 	}
 }
 
+func TestMainListenAddressUsesConfiguredPort(t *testing.T) {
+	t.Setenv("HDU_MAIN_PORT", "6791")
+	address, port := mainListenAddress()
+	if address != "127.0.0.1:6791" || port != "6791" {
+		t.Fatalf("mainListenAddress() = (%q, %q), want (127.0.0.1:6791, 6791)", address, port)
+	}
+}
+
+func TestMainListenAddressRejectsInvalidPort(t *testing.T) {
+	for _, value := range []string{"", "0", "65536", "not-a-port"} {
+		t.Run(value, func(t *testing.T) {
+			t.Setenv("HDU_MAIN_PORT", value)
+			address, port := mainListenAddress()
+			if address != addr || port != "6789" {
+				t.Fatalf("mainListenAddress() = (%q, %q), want (%q, 6789)", address, port, addr)
+			}
+		})
+	}
+}
+
 func TestServeExporterStatic(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/exporter/", nil)
 	rec := httptest.NewRecorder()
@@ -46,6 +70,163 @@ func TestServeExporterStatic(t *testing.T) {
 	}
 	if body := rec.Body.String(); !strings.Contains(body, "/exporter/main.js") {
 		t.Fatalf("exporter page did not use unified /exporter assets")
+	}
+}
+
+func TestHandlePersonalScheduleRefreshReportsMissingLoginConfig(t *testing.T) {
+	t.Setenv("HDU_LOGIN_CONFIG", filepath.Join(t.TempDir(), "missing-config.json"))
+	state := &appState{service: school.NewService()}
+	req := httptest.NewRequest(http.MethodPost, "/api/export/personal-schedule", nil)
+	rec := httptest.NewRecorder()
+	handlePersonalScheduleRefresh(state)(rec, req)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusConflict)
+	}
+	if !strings.Contains(rec.Body.String(), "自动登录未启用") {
+		t.Fatalf("response should explain auto-login is unavailable: %s", rec.Body.String())
+	}
+}
+
+func TestHandleScheduleExportWritesTargetToProjectDirectory(t *testing.T) {
+	oldDir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	tmp := t.TempDir()
+	if err := os.Chdir(tmp); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(oldDir) })
+
+	req := httptest.NewRequest(http.MethodPost, "/api/export/timetable", strings.NewReader(`{
+		"kind":"target",
+		"payload":{"schemaVersion":1,"source":"candidate","items":[{"jxbmc":"(2026-2027-1)-A0001001-01","kcmc":"Test Course"}]}
+	}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	handleScheduleExport(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	var response struct {
+		OK     bool   `json:"ok"`
+		Path   string `json:"path"`
+		Count  int    `json:"count"`
+		Source string `json:"source"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatalf("response JSON: %v", err)
+	}
+	if !response.OK || response.Count != 1 || response.Source != "candidate" {
+		t.Fatalf("unexpected response: %#v", response)
+	}
+	wantPath, err := filepath.Abs("target-schedule.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response.Path != wantPath {
+		t.Fatalf("path = %q, want %q", response.Path, wantPath)
+	}
+	data, err := os.ReadFile(wantPath)
+	if err != nil {
+		t.Fatalf("target schedule was not written: %v", err)
+	}
+	var payload school.CoursePayload
+	if err := json.Unmarshal(data, &payload); err != nil || len(payload.Items) != 1 {
+		t.Fatalf("written target payload invalid: items=%d error=%v", len(payload.Items), err)
+	}
+}
+
+func TestHandleScheduleExportUsesConfiguredOutputDirectory(t *testing.T) {
+	outputDir := t.TempDir()
+	workingDir := t.TempDir()
+	t.Setenv("HDU_OUTPUT_DIR", outputDir)
+
+	oldDir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(workingDir); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(oldDir) })
+
+	req := httptest.NewRequest(http.MethodPost, "/api/export/timetable", strings.NewReader(`{
+		"kind":"target",
+		"payload":{"schemaVersion":1,"source":"candidate","items":[{"jxbmc":"(2026-2027-1)-A0001001-01","kcmc":"Configured Output Course"}]}
+	}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	handleScheduleExport(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+
+	var response struct {
+		Path string `json:"path"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatalf("response JSON: %v", err)
+	}
+	wantPath := filepath.Join(outputDir, "target-schedule.json")
+	if response.Path != wantPath {
+		t.Fatalf("path = %q, want %q", response.Path, wantPath)
+	}
+	if _, err := os.Stat(wantPath); err != nil {
+		t.Fatalf("configured output file missing: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(workingDir, "target-schedule.json")); !os.IsNotExist(err) {
+		t.Fatalf("working directory unexpectedly contains target schedule, stat error = %v", err)
+	}
+}
+
+func TestHandleStatusReadsConfiguredOutputDirectory(t *testing.T) {
+	outputDir := t.TempDir()
+	workingDir := t.TempDir()
+	t.Setenv("HDU_OUTPUT_DIR", outputDir)
+
+	oldDir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(workingDir); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(oldDir) })
+
+	if err := school.WriteCourseFile(filepath.Join(outputDir, "course.json"), []byte(`{"items":[{"kcmc":"Configured Course","xf":"3"}]}`)); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(outputDir, "personal-schedule.json"), []byte(`{"items":[{"kcmc":"Configured Personal"}]}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/status", nil)
+	rec := httptest.NewRecorder()
+	handleStatus(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	var response school.StatusResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if !response.Ready || response.Count != 1 || response.PersonalCount != 1 || !response.PersonalExported {
+		t.Fatalf("unexpected configured status: %#v", response)
+	}
+}
+
+func TestSchedulerExportUsesProjectWriter(t *testing.T) {
+	data, err := os.ReadFile("scheduler.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	if !strings.Contains(text, "'/api/export/timetable'") && !strings.Contains(text, "\"/api/export/timetable\"") {
+		t.Fatal("scheduler export does not call the project timetable writer")
+	}
+	if strings.Contains(text, "URL.createObjectURL(blob)") {
+		t.Fatal("scheduler export still downloads the timetable through the browser")
 	}
 }
 
@@ -89,4 +270,166 @@ func TestHandleStatusAllowsCourseOnlyAndReportsPersonalSchedule(t *testing.T) {
 	if body := rec.Body.String(); !strings.Contains(body, `"ready":true`) || !strings.Contains(body, `"personalExported":true`) {
 		t.Fatalf("status with both files should be ready: %s", body)
 	}
+}
+
+func TestHandleStatusDoesNotRepairCourseFileOnGet(t *testing.T) {
+	oldDir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	tmp := t.TempDir()
+	if err := os.Chdir(tmp); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(oldDir) })
+
+	data, err := json.Marshal(map[string]any{
+		"items": []map[string]any{{
+			"jxbmc": "(2026-2027-1)-A0001001-01",
+			"kcmc":  "Test Course",
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile("course.json", data, 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeTestCourseWorkbook("course-data.xlsx"); err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/status", nil)
+	rec := httptest.NewRecorder()
+	handleStatus(rec, req)
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"ready":true`) {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	got, err := os.ReadFile("course.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != string(data) {
+		t.Fatalf("GET /api/status rewrote course.json: before=%d bytes after=%d bytes", len(data), len(got))
+	}
+	backups, err := filepath.Glob("course.incomplete-*.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(backups) != 0 {
+		t.Fatalf("GET /api/status created backups: %v", backups)
+	}
+}
+
+func TestHandleCourseDoesNotRepairCourseFileOnGet(t *testing.T) {
+	oldDir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	tmp := t.TempDir()
+	if err := os.Chdir(tmp); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(oldDir) })
+
+	data := []byte(`{"items":[{"jxbmc":"(2026-2027-1)-A0001001-01","kcmc":"Test Course"}]}`)
+	if err := os.WriteFile("course.json", data, 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeTestCourseWorkbook("course-data.xlsx"); err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/course", nil)
+	rec := httptest.NewRecorder()
+	handleCourse(rec, req)
+	if rec.Code != http.StatusOK || rec.Body.String() != string(data) {
+		t.Fatalf("course = %d %s", rec.Code, rec.Body.String())
+	}
+	backups, err := filepath.Glob("course.incomplete-*.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(backups) != 0 {
+		t.Fatalf("GET /api/course created backups: %v", backups)
+	}
+}
+
+func TestHandleStatusDoesNotTouchCreditCapableJSONOnGet(t *testing.T) {
+	oldDir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	tmp := t.TempDir()
+	if err := os.Chdir(tmp); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(oldDir) })
+
+	data := []byte(`{"items":[{"jxbmc":"(2026-2027-1)-A0001001-01","kcmc":"Test Course","xf":"3"}]}`)
+	if err := os.WriteFile("course.json", data, 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeTestCourseWorkbook("course-data.xlsx"); err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/status", nil)
+	rec := httptest.NewRecorder()
+	handleStatus(rec, req)
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"ready":true`) {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	got, err := os.ReadFile("course.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != string(data) {
+		t.Fatalf("credit-capable GET changed course.json: before=%d bytes after=%d bytes", len(data), len(got))
+	}
+	backups, err := filepath.Glob("course.incomplete-*.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(backups) != 0 {
+		t.Fatalf("credit-capable GET created backups: %v", backups)
+	}
+}
+
+func writeTestCourseWorkbook(name string) error {
+	file, err := os.Create(name)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	writer := zip.NewWriter(file)
+	sheet, err := writer.Create("xl/worksheets/sheet1.xml")
+	if err != nil {
+		return err
+	}
+	rows := [][]string{
+		{"教学班名称", "课程名称", "学分"},
+		{"(2026-2027-1)-A0001001-01", "Test Course", "0.25"},
+	}
+	var builder strings.Builder
+	builder.WriteString(`<?xml version="1.0" encoding="UTF-8"?><worksheet><sheetData>`)
+	for rowIndex, row := range rows {
+		builder.WriteString(`<row r="`)
+		builder.WriteString(string(rune('1' + rowIndex)))
+		builder.WriteString(`">`)
+		for columnIndex, value := range row {
+			builder.WriteString(`<c r="`)
+			builder.WriteString(string(rune('A' + columnIndex)))
+			builder.WriteString(string(rune('1' + rowIndex)))
+			builder.WriteString(`" t="inlineStr"><is><t>`)
+			builder.WriteString(value)
+			builder.WriteString(`</t></is></c>`)
+		}
+		builder.WriteString(`</row>`)
+	}
+	builder.WriteString(`</sheetData></worksheet>`)
+	if _, err := sheet.Write([]byte(builder.String())); err != nil {
+		return err
+	}
+	return writer.Close()
 }
