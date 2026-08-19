@@ -73,6 +73,42 @@ func TestServeExporterStatic(t *testing.T) {
 	}
 }
 
+func TestServeStaticPreservesPublicURLs(t *testing.T) {
+	tests := []struct {
+		path        string
+		contentType string
+		marker      string
+	}{
+		{"/", "text/html; charset=utf-8", "<title>HDU 课表自动化编排助手</title>"},
+		{"/bootstrap.html", "text/html; charset=utf-8", "<title>HDU 模拟排课助手 - 导入</title>"},
+		{"/scheduler.html", "text/html; charset=utf-8", "<title>HDU 课表自动化编排助手</title>"},
+		{"/styles.css", "text/css; charset=utf-8", ".bootstrap-layout"},
+		{"/shared.js", "application/javascript; charset=utf-8", "globalThis.HDU"},
+		{"/bootstrap.js", "application/javascript; charset=utf-8", "/api/bootstrap/import"},
+		{"/scheduler.js", "application/javascript; charset=utf-8", "/api/export/timetable"},
+		{"/scheduler-worker.js", "application/javascript; charset=utf-8", "self.onmessage"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.path, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, tt.path, nil)
+			rec := httptest.NewRecorder()
+
+			serveStatic(rec, req)
+
+			if rec.Code != http.StatusOK {
+				t.Fatalf("serveStatic(%q) status = %d, want %d", tt.path, rec.Code, http.StatusOK)
+			}
+			if got := rec.Header().Get("Content-Type"); got != tt.contentType {
+				t.Fatalf("serveStatic(%q) content type = %q, want %q", tt.path, got, tt.contentType)
+			}
+			if body := rec.Body.String(); !strings.Contains(body, tt.marker) {
+				t.Fatalf("serveStatic(%q) body does not contain %q", tt.path, tt.marker)
+			}
+		})
+	}
+}
+
 func TestHandlePersonalScheduleRefreshReportsMissingLoginConfig(t *testing.T) {
 	t.Setenv("HDU_LOGIN_CONFIG", filepath.Join(t.TempDir(), "missing-config.json"))
 	state := &appState{service: school.NewService()}
