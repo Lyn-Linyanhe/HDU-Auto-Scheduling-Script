@@ -416,7 +416,7 @@ async function captureScreenshotIfPossible() {
   const browser = spawn(browserPath, [
     '--headless=new',
     '--disable-gpu',
-    '--disable-software-rasterizer',
+    '--disable-dev-shm-usage',
     '--disable-extensions',
     '--no-first-run',
     '--no-default-browser-check',
@@ -454,7 +454,7 @@ async function startInteractiveBrowser(viewport, index, attempt) {
   const browser = spawn(browserPath, [
     '--headless=new',
     '--disable-gpu',
-    '--disable-software-rasterizer',
+    '--disable-dev-shm-usage',
     '--disable-extensions',
     '--no-first-run',
     '--no-default-browser-check',
