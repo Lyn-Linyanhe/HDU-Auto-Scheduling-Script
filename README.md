@@ -25,12 +25,18 @@ HDU-Auto-Scheduling-Script.exe
 
 | 目录 | 作用 |
 | --- | --- |
-| 根目录、`main.go`、`scheduler.html` | 主排课助手和统一启动入口 |
+| 根目录、`main.go` | 主排课助手的 Go 入口和统一 HTTP 服务 |
+| `web/` | 主排课助手的内嵌 HTML、CSS、JavaScript 和 Worker |
 | `school/` | 教务登录、全校课程和个人课表导出 |
 | `HDU-Smart-Course-Agent/` | 独立 Go module，负责把目标课表转换为 KillCourse 执行准备 |
+| `cmd/` | 兼容导出器和仅供验收使用的本地 testlab 命令 |
 | `scripts/` | 构建、发布包、自检和 UI/API 验收脚本 |
+| `docs/` | 用户文档、仓库规范和带日期的工程记录 |
+| `testdata/` | 不含真实账号和个人课表的确定性测试样例 |
 
 Smart Agent 虽然保留独立 module 和独立可执行文件，但属于本项目的一部分，不需要拆成第二个 GitHub 仓库。`HDU-KillCourse-main` 是外部依赖目录，默认位于本机另一个目录，不复制进本仓库。
+
+文档导航见 [docs/README.md](docs/README.md)。
 
 ### 仓库文件边界
 
@@ -94,11 +100,13 @@ release 版默认把 `course.json`、`personal-schedule.json`、目标课表和�
 go run .
 ```
 
-开发调试时仍可单独运行旧导出器入口：
+开发调试兼容流程时仍可单独运行导出器入口：
 
 ```bash
 go run ./cmd/course-exporter
 ```
+
+该命令仅作为兼容和开发入口保留；release 用户应运行统一的 `HDU-Auto-Scheduling-Script.exe`。
 
 程序会自动打开本地浏览器页面。若只想启动服务、不自动打开浏览器：
 

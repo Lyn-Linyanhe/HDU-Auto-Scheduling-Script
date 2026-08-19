@@ -2,9 +2,13 @@
 
 ## Track In Git
 
-The repository contains the Go source, frontend source, tests, deterministic `testdata/`, documentation, build scripts, `VERSION`, and module files.
+The repository contains the Go source, frontend source under `web/`, tests, deterministic `testdata/`, documentation, build scripts, `VERSION`, and module files. See [`docs/README.md`](README.md) for the current documentation index.
 
 `HDU-Smart-Course-Agent/` is an intentional part of this monorepo. It keeps its own Go module, but it is not a second repository.
+
+`docs/superpowers/` contains dated engineering specs and implementation plans. Paths and status statements in those records describe the repository at the time they were written.
+
+The unified main program serves `cmd/course-exporter/web/` at `/exporter/`. That web directory is a shared runtime source dependency and must not be removed as unused legacy code; the standalone `cmd/course-exporter` Go command remains a compatibility and development entry.
 
 ## Keep Local
 

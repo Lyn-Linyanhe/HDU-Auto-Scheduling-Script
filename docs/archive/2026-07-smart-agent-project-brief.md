@@ -1,4 +1,6 @@
-# HDU 智能选课执行助手：给 Codex 的项目说明
+# HDU 智能选课执行助手早期项目说明（归档）
+
+> 本文记录 2026 年 7 月的早期目标、里程碑和协作约定，保留用于追溯设计背景，不代表当前实现状态。当前使用说明见 [`HDU-Smart-Course-Agent/README.md`](../../HDU-Smart-Course-Agent/README.md) 和 [`HDU-Smart-Course-Agent/SMART_AGENT_QUICKSTART.md`](../../HDU-Smart-Course-Agent/SMART_AGENT_QUICKSTART.md)。
 
 ## 背景
 
