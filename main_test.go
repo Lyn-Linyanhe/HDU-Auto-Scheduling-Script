@@ -60,16 +60,33 @@ func TestMainListenAddressRejectsInvalidPort(t *testing.T) {
 }
 
 func TestServeExporterStatic(t *testing.T) {
-	req := httptest.NewRequest(http.MethodGet, "/exporter/", nil)
-	rec := httptest.NewRecorder()
-
-	serveExporterStatic(rec, req)
-
-	if rec.Code != http.StatusOK {
-		t.Fatalf("serveExporterStatic status = %d, want %d", rec.Code, http.StatusOK)
+	tests := []struct {
+		path        string
+		contentType string
+		marker      string
+	}{
+		{"/exporter/", "text/html; charset=utf-8", "/exporter/main.js"},
+		{"/exporter/style.css", "text/css; charset=utf-8", "--bg:"},
+		{"/exporter/main.js", "application/javascript; charset=utf-8", "const els"},
 	}
-	if body := rec.Body.String(); !strings.Contains(body, "/exporter/main.js") {
-		t.Fatalf("exporter page did not use unified /exporter assets")
+
+	for _, tt := range tests {
+		t.Run(tt.path, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, tt.path, nil)
+			rec := httptest.NewRecorder()
+
+			serveExporterStatic(rec, req)
+
+			if rec.Code != http.StatusOK {
+				t.Fatalf("serveExporterStatic(%q) status = %d, want %d", tt.path, rec.Code, http.StatusOK)
+			}
+			if got := rec.Header().Get("Content-Type"); got != tt.contentType {
+				t.Fatalf("serveExporterStatic(%q) content type = %q, want %q", tt.path, got, tt.contentType)
+			}
+			if body := rec.Body.String(); !strings.Contains(body, tt.marker) {
+				t.Fatalf("serveExporterStatic(%q) body does not contain %q", tt.path, tt.marker)
+			}
+		})
 	}
 }
 
