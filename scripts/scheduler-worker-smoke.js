@@ -3,9 +3,10 @@ const path = require('path');
 const vm = require('vm');
 
 const root = path.resolve(__dirname, '..');
+const webRoot = path.join(root, 'web');
 
 function readText(file) {
-  return fs.readFileSync(path.join(root, file), 'utf8');
+  return fs.readFileSync(path.join(webRoot, file), 'utf8');
 }
 
 const context = {

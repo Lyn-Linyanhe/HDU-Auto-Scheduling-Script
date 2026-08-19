@@ -19,7 +19,7 @@ import (
 	"hdu-scheduler/school"
 )
 
-//go:embed *.html *.css *.js cmd/course-exporter/web/*
+//go:embed web/* cmd/course-exporter/web/*
 var webFS embed.FS
 
 const addr = "127.0.0.1:6789"
@@ -140,7 +140,7 @@ func serveStatic(w http.ResponseWriter, r *http.Request) {
 	if name == "" || name == "." || !strings.Contains(name, ".") {
 		name = "index.html"
 	}
-	data, err := webFS.ReadFile(name)
+	data, err := webFS.ReadFile(path.Join("web", name))
 	if err != nil {
 		http.NotFound(w, r)
 		return

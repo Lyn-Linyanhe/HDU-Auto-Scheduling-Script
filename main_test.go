@@ -253,7 +253,7 @@ func TestHandleStatusReadsConfiguredOutputDirectory(t *testing.T) {
 }
 
 func TestSchedulerExportUsesProjectWriter(t *testing.T) {
-	data, err := os.ReadFile("scheduler.js")
+	data, err := os.ReadFile("web/scheduler.js")
 	if err != nil {
 		t.Fatal(err)
 	}
