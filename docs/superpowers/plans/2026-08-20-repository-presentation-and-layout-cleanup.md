@@ -475,8 +475,10 @@ git commit -m "docs: organize public repository guidance"
 
 **Files:**
 - Create: `scripts/repository-layout-check.ps1`
+- Create: `scripts/repository-layout-check-test.ps1`
 - Create: `.github/workflows/ci.yml`
 - Modify: `README.md`
+- Modify: `docs/superpowers/plans/2026-08-20-repository-presentation-and-layout-cleanup.md` when task review reveals an omitted layout rule.
 
 **Interfaces:**
 - Consumes: the target tree from Tasks 2 and 3 and the existing two-module test commands.
@@ -513,6 +515,7 @@ $legacyRootFiles = @(
 )
 $privateLeafNames = @(
   "course.json",
+  "course-export-diagnosis.json",
   "personal-schedule.json",
   "personal-schedule-live.json",
   "target-schedule.json",
@@ -524,7 +527,15 @@ $privateLeafNames = @(
   "execution-package.json",
   "execution-log.json",
   "fallback-recommendations.json",
+  "execution-runbook.md",
   "run-killcourse.bat"
+)
+$privatePathPatterns = @(
+  "(^|/)hdu-(current|target)-timetable[^/]*\.json$",
+  "(^|/)(HDU-Smart-Course-Agent|选课脚本)/config\.json$",
+  "^(dist|release)/",
+  "\.(exe|zip|db|db-wal|db-shm|log|xlsx|xls)$",
+  "\.bak-[^/]+$"
 )
 
 Push-Location $repoRoot
@@ -544,9 +555,18 @@ try {
     throw "git ls-files failed"
   }
 
-  $private = $tracked | Where-Object {
-    $leaf = Split-Path -Leaf $_
-    $privateLeafNames -contains $leaf -or $_ -match '\.(exe|zip|db|db-wal|db-shm)$'
+  $private = foreach ($trackedPath in $tracked) {
+    $leaf = Split-Path -Leaf $trackedPath
+    $matchesPrivatePattern = $false
+    foreach ($pattern in $privatePathPatterns) {
+      if ($trackedPath -match $pattern) {
+        $matchesPrivatePattern = $true
+        break
+      }
+    }
+    if ($privateLeafNames -contains $leaf -or $matchesPrivatePattern) {
+      $trackedPath
+    }
   }
   if ($private) {
     throw "Private or generated files are tracked: $($private -join ', ')"
@@ -558,17 +578,99 @@ try {
 }
 ```
 
-- [ ] **Step 2: Run the local layout checker**
+- [ ] **Step 2: Add negative tests with an isolated Git index**
+
+Create `scripts/repository-layout-check-test.ps1` with this content:
+
+```powershell
+$ErrorActionPreference = "Stop"
+
+$repoRoot = Split-Path -Parent $PSScriptRoot
+$layoutCheck = Join-Path $PSScriptRoot "repository-layout-check.ps1"
+$forbiddenPaths = @(
+  "course-export-diagnosis.json",
+  "hdu-current-timetable-test.json",
+  "hdu-target-timetable.json",
+  "logs/run.log",
+  "data/course.xlsx",
+  "data/legacy.xls",
+  "course.json.bak-20260820",
+  "HDU-Smart-Course-Agent/config.json",
+  "execution-runbook.md",
+  "dist/generated.txt",
+  "release/package/README.md"
+)
+
+Push-Location $repoRoot
+try {
+  $realIndex = (git rev-parse --git-path index).Trim()
+  $blob = (git rev-parse HEAD:README.md).Trim()
+  if ($LASTEXITCODE -ne 0 -or -not $realIndex -or -not $blob) {
+    throw "Could not resolve Git index test inputs."
+  }
+
+  for ($index = 0; $index -lt $forbiddenPaths.Count; $index += 1) {
+    $forbiddenPath = $forbiddenPaths[$index]
+    $testIndex = Join-Path $env:TEMP "hdu-layout-check-$PID-$index.index"
+    $previousIndex = [Environment]::GetEnvironmentVariable("GIT_INDEX_FILE", "Process")
+    Copy-Item -LiteralPath $realIndex -Destination $testIndex -Force
+
+    try {
+      $env:GIT_INDEX_FILE = $testIndex
+      git update-index --add --cacheinfo "100644,$blob,$forbiddenPath"
+      if ($LASTEXITCODE -ne 0) {
+        throw "Could not add test index entry: $forbiddenPath"
+      }
+
+      $previousErrorActionPreference = $ErrorActionPreference
+      $ErrorActionPreference = "Continue"
+      try {
+        powershell -ExecutionPolicy Bypass -File $layoutCheck *> $null
+        $layoutExitCode = $LASTEXITCODE
+      } finally {
+        $ErrorActionPreference = $previousErrorActionPreference
+      }
+      if ($layoutExitCode -eq 0) {
+        throw "Layout check accepted forbidden tracked path: $forbiddenPath"
+      }
+    } finally {
+      if ($null -eq $previousIndex) {
+        Remove-Item Env:GIT_INDEX_FILE -ErrorAction SilentlyContinue
+      } else {
+        $env:GIT_INDEX_FILE = $previousIndex
+      }
+      if (Test-Path -LiteralPath $testIndex) {
+        Remove-Item -LiteralPath $testIndex -Force
+      }
+    }
+  }
+
+  Write-Host "Repository layout negative tests passed."
+} finally {
+  Pop-Location
+}
+```
+
+Run before widening the checker:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/repository-layout-check-test.ps1
+```
+
+Expected before the checker fix: FAIL with `Layout check accepted forbidden tracked path: course-export-diagnosis.json`.
+
+- [ ] **Step 3: Run the positive and negative layout checks**
 
 Run:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts/repository-layout-check.ps1
+powershell -ExecutionPolicy Bypass -File scripts/repository-layout-check-test.ps1
 ```
 
-Expected: `Repository layout check passed.`
+Expected: `Repository layout check passed.` and `Repository layout negative tests passed.`
 
-- [ ] **Step 3: Add the GitHub Actions workflow**
+- [ ] **Step 4: Add the GitHub Actions workflow**
 
 Create `.github/workflows/ci.yml` with this content:
 
@@ -603,6 +705,10 @@ jobs:
         shell: powershell
         run: powershell -ExecutionPolicy Bypass -File scripts/repository-layout-check.ps1
 
+      - name: Test repository layout rejections
+        shell: powershell
+        run: powershell -ExecutionPolicy Bypass -File scripts/repository-layout-check-test.ps1
+
       - name: Test main module
         shell: powershell
         run: go test -buildvcs=false ./...
@@ -621,7 +727,7 @@ jobs:
         run: powershell -ExecutionPolicy Bypass -File scripts/testlab-acceptance.ps1
 ```
 
-- [ ] **Step 4: Document the single CI-grade command set**
+- [ ] **Step 5: Document the single CI-grade command set**
 
 Add a short `持续集成` subsection under `README.md`'s test section. State that GitHub Actions runs the layout check, both Go module suites, Worker smoke, and deterministic testlab acceptance. Include the local layout command exactly:
 
@@ -629,12 +735,13 @@ Add a short `持续集成` subsection under `README.md`'s test section. State th
 powershell -ExecutionPolicy Bypass -File scripts/repository-layout-check.ps1
 ```
 
-- [ ] **Step 5: Verify the workflow and commit**
+- [ ] **Step 6: Verify the workflow and commit**
 
 Run:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts/repository-layout-check.ps1
+powershell -ExecutionPolicy Bypass -File scripts/repository-layout-check-test.ps1
 go test -buildvcs=false ./...
 Push-Location HDU-Smart-Course-Agent
 try { go test -buildvcs=false ./... } finally { Pop-Location }
@@ -647,7 +754,7 @@ Expected: every command passes and the workflow contains no secret, release, or 
 Commit:
 
 ```powershell
-git add .github/workflows/ci.yml scripts/repository-layout-check.ps1 README.md
+git add .github/workflows/ci.yml scripts/repository-layout-check.ps1 scripts/repository-layout-check-test.ps1 README.md docs/superpowers/plans/2026-08-20-repository-presentation-and-layout-cleanup.md
 git commit -m "ci: verify repository layout and both modules"
 ```
 

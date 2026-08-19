@@ -24,6 +24,7 @@ $legacyRootFiles = @(
 )
 $privateLeafNames = @(
   "course.json",
+  "course-export-diagnosis.json",
   "personal-schedule.json",
   "personal-schedule-live.json",
   "target-schedule.json",
@@ -35,7 +36,15 @@ $privateLeafNames = @(
   "execution-package.json",
   "execution-log.json",
   "fallback-recommendations.json",
+  "execution-runbook.md",
   "run-killcourse.bat"
+)
+$privatePathPatterns = @(
+  "(^|/)hdu-(current|target)-timetable[^/]*\.json$",
+  "(^|/)(HDU-Smart-Course-Agent|选课脚本)/config\.json$",
+  "^(dist|release)/",
+  "\.(exe|zip|db|db-wal|db-shm|log|xlsx|xls)$",
+  "\.bak-[^/]+$"
 )
 
 Push-Location $repoRoot
@@ -55,9 +64,18 @@ try {
     throw "git ls-files failed"
   }
 
-  $private = $tracked | Where-Object {
-    $leaf = Split-Path -Leaf $_
-    $privateLeafNames -contains $leaf -or $_ -match '\.(exe|zip|db|db-wal|db-shm)$'
+  $private = foreach ($trackedPath in $tracked) {
+    $leaf = Split-Path -Leaf $trackedPath
+    $matchesPrivatePattern = $false
+    foreach ($pattern in $privatePathPatterns) {
+      if ($trackedPath -match $pattern) {
+        $matchesPrivatePattern = $true
+        break
+      }
+    }
+    if ($privateLeafNames -contains $leaf -or $matchesPrivatePattern) {
+      $trackedPath
+    }
   }
   if ($private) {
     throw "Private or generated files are tracked: $($private -join ', ')"

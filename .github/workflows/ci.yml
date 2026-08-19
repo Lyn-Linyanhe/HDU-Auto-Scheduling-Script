@@ -28,6 +28,10 @@ jobs:
         shell: powershell
         run: powershell -ExecutionPolicy Bypass -File scripts/repository-layout-check.ps1
 
+      - name: Test repository layout rejections
+        shell: powershell
+        run: powershell -ExecutionPolicy Bypass -File scripts/repository-layout-check-test.ps1
+
       - name: Test main module
         shell: powershell
         run: go test -buildvcs=false ./...
