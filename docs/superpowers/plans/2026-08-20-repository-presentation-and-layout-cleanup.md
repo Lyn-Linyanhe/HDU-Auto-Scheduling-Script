@@ -762,6 +762,7 @@ git commit -m "ci: verify repository layout and both modules"
 
 **Files:**
 - Inspect: all files changed in Tasks 1-4.
+- Modify: `docs/superpowers/plans/2026-08-20-repository-presentation-and-layout-cleanup.md`
 - Generate locally only: ignored files under `dist/` and `release/` through existing scripts.
 
 **Interfaces:**
@@ -790,12 +791,28 @@ Run:
 
 ```powershell
 $layoutExe = Join-Path $env:TEMP "HDU-Auto-Scheduling-Script-layout-check.exe"
+$previousMainExe = [Environment]::GetEnvironmentVariable("HDU_MAIN_EXE", "Process")
+$previousMainPort = [Environment]::GetEnvironmentVariable("HDU_MAIN_PORT", "Process")
+$portListener = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, 0)
+$portListener.Start()
+$mainPort = $portListener.LocalEndpoint.Port
+$portListener.Stop()
 go build -buildvcs=false -o $layoutExe .
 $env:HDU_MAIN_EXE = $layoutExe
+$env:HDU_MAIN_PORT = $mainPort.ToString()
 try {
   node scripts/main-ui-acceptance.js
 } finally {
-  Remove-Item Env:HDU_MAIN_EXE -ErrorAction SilentlyContinue
+  if ($null -eq $previousMainExe) {
+    Remove-Item Env:HDU_MAIN_EXE -ErrorAction SilentlyContinue
+  } else {
+    $env:HDU_MAIN_EXE = $previousMainExe
+  }
+  if ($null -eq $previousMainPort) {
+    Remove-Item Env:HDU_MAIN_PORT -ErrorAction SilentlyContinue
+  } else {
+    $env:HDU_MAIN_PORT = $previousMainPort
+  }
   if (Test-Path -LiteralPath $layoutExe) { Remove-Item -LiteralPath $layoutExe -Force }
 }
 ```
