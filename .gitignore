@@ -60,6 +60,7 @@
 /tmp-smart-agent-ui-smoke/
 /.tmp-*/
 /.gocache/
+/.worktrees/
 
 # Local environment and OS files
 .env
