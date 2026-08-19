@@ -200,11 +200,19 @@ function prepareTempWorkspace() {
   fs.mkdirSync(tempDownloads, { recursive: true });
   fs.mkdirSync(tempEntry, { recursive: true });
 
-  const sourceCourse = path.join(root, 'course.json');
-  const sampleCourse = path.join(root, 'samples', 'course.sample.json');
-  const source = fs.existsSync(sourceCourse) ? sourceCourse : sampleCourse;
-  if (!fs.existsSync(source)) {
-    throw new Error('course.json or samples/course.sample.json is required for Smart Agent UI smoke test.');
+  const courseCandidates = [
+    process.env.HDU_COURSE_FIXTURE
+      ? path.resolve(process.env.HDU_COURSE_FIXTURE)
+      : '',
+    path.join(root, 'course.json'),
+    path.join(root, 'testdata', 'course.sample.json'),
+    path.join(root, 'samples', 'course.sample.json'),
+  ].filter(Boolean);
+  const source = courseCandidates.find((candidate) => fs.existsSync(candidate));
+  if (!source) {
+    throw new Error(
+      'HDU_COURSE_FIXTURE, course.json, testdata/course.sample.json, or samples/course.sample.json is required for Smart Agent UI smoke test.',
+    );
   }
   const coursePayload = JSON.parse(fs.readFileSync(source, 'utf8'));
   coursePayload.currentRound = 1;

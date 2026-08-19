@@ -133,7 +133,12 @@ Run:
 
 ```powershell
 $previousFixture = [Environment]::GetEnvironmentVariable("HDU_COURSE_FIXTURE", "Process")
+$previousAgentExe = [Environment]::GetEnvironmentVariable("HDU_SMART_AGENT_EXE", "Process")
+$sourceSmokeExe = Join-Path $env:TEMP "HDU-Smart-Course-Agent-source-smoke.exe"
+Push-Location HDU-Smart-Course-Agent
+try { go build -buildvcs=false -o $sourceSmokeExe . } finally { Pop-Location }
 Remove-Item Env:HDU_COURSE_FIXTURE -ErrorAction SilentlyContinue
+$env:HDU_SMART_AGENT_EXE = $sourceSmokeExe
 try {
   node scripts/smart-agent-ui-smoke.js
   powershell -ExecutionPolicy Bypass -File scripts/testlab-acceptance.ps1
@@ -142,6 +147,14 @@ try {
     Remove-Item Env:HDU_COURSE_FIXTURE -ErrorAction SilentlyContinue
   } else {
     $env:HDU_COURSE_FIXTURE = $previousFixture
+  }
+  if ($null -eq $previousAgentExe) {
+    Remove-Item Env:HDU_SMART_AGENT_EXE -ErrorAction SilentlyContinue
+  } else {
+    $env:HDU_SMART_AGENT_EXE = $previousAgentExe
+  }
+  if (Test-Path -LiteralPath $sourceSmokeExe) {
+    Remove-Item -LiteralPath $sourceSmokeExe -Force
   }
 }
 ```
