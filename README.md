@@ -32,6 +32,10 @@ HDU-Auto-Scheduling-Script.exe
 
 Smart Agent 虽然保留独立 module 和独立可执行文件，但属于本项目的一部分，不需要拆成第二个 GitHub 仓库。`HDU-KillCourse-main` 是外部依赖目录，默认位于本机另一个目录，不复制进本仓库。
 
+### 仓库文件边界
+
+源码仓库只提交源码、文档、测试样例和构建脚本。个人课表、登录配置、Cookie、运行日志、浏览器目录、exe、ZIP 和 `release/` 均为本地产物；可分发 ZIP 应作为 GitHub Release asset 上传。详细规则见 [docs/REPOSITORY_LAYOUT.md](docs/REPOSITORY_LAYOUT.md)。
+
 ## 输出目录与启动规则
 
 release 版默认把 `course.json`、`personal-schedule.json`、目标课表和当前课表写入 exe 所在目录，不受你从哪个快捷方式或工作目录启动的影响。开发/测试进程默认使用工作目录；也可以通过环境变量 `HDU_OUTPUT_DIR` 指定一个绝对或相对目录，所有读写会统一使用该目录。
@@ -125,6 +129,8 @@ release/HDU-Auto-Scheduling-Script-v版本号.zip
 ```
 
 release 包包含统一 exe、使用说明、课程 schema、版本文件、manifest 和测试样例数据。
+
+`release/` 和 `dist/` 是本地构建输出，不会随 `git push` 上传。需要发布时，应从当前提交重新生成 ZIP，并将它作为与 `VERSION` 相同 tag 的 GitHub Release asset 单独上传。
 
 若需要把排课结果转换为 `HDU-KillCourse` 执行计划，release 包内还包含 Smart Agent 的完整运行说明和日志 schema：
 

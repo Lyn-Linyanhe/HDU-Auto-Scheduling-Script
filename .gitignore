@@ -4,6 +4,15 @@
 *.exe
 *.log
 
+# Generated packages and local backups
+*.zip
+*.bak-*
+
+# Browser profile databases created by UI acceptance runs
+*.db
+*.db-wal
+*.db-shm
+
 # Local course data
 /course.json
 /personal-schedule.json

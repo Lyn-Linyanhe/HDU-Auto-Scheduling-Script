@@ -1,9 +1,14 @@
 param(
   [string]$PackageDir = "",
+  [int]$Port = 6789,
   [switch]$KeepTemp
 )
 
 $ErrorActionPreference = "Stop"
+
+if ($Port -lt 1 -or $Port -gt 65535) {
+  throw "Port must be between 1 and 65535."
+}
 
 $ScriptDir = $PSScriptRoot
 $Root = Split-Path -Parent $ScriptDir
@@ -25,7 +30,7 @@ $PackageDir = [System.IO.Path]::GetFullPath($PackageDir)
 $ExePath = Join-Path $PackageDir "HDU-Auto-Scheduling-Script.exe"
 $SampleCoursePath = Join-Path $PackageDir "samples\course.sample.json"
 $TempRoot = Join-Path $Root "tmp-release-main-smoke"
-$ApiBase = "http://127.0.0.1:6789"
+$ApiBase = "http://127.0.0.1:$Port"
 
 function Write-Step {
   param([string]$Message)
@@ -95,11 +100,21 @@ function Invoke-MainSmokeCase {
 
   $oldNoBrowser = $env:HDU_NO_BROWSER
   $oldOutputDir = $env:HDU_OUTPUT_DIR
+  $oldMainPort = $env:HDU_MAIN_PORT
   $env:HDU_NO_BROWSER = "1"
   $env:HDU_OUTPUT_DIR = $caseDir
-  $process = Start-Process -FilePath (Join-Path $caseDir "HDU-Auto-Scheduling-Script.exe") -WorkingDirectory $caseDir -WindowStyle Hidden -PassThru
+  $env:HDU_MAIN_PORT = [string]$Port
+  $stdoutPath = Join-Path $caseDir "main.stdout.log"
+  $stderrPath = Join-Path $caseDir "main.stderr.log"
+  $process = Start-Process -FilePath (Join-Path $caseDir "HDU-Auto-Scheduling-Script.exe") -WorkingDirectory $caseDir -WindowStyle Hidden -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath -PassThru
   try {
-    $status = Wait-AppStatus
+    try {
+      $status = Wait-AppStatus
+    } catch {
+      $stdout = if (Test-Path -LiteralPath $stdoutPath) { Get-Content -LiteralPath $stdoutPath -Raw } else { "" }
+      $stderr = if (Test-Path -LiteralPath $stderrPath) { Get-Content -LiteralPath $stderrPath -Raw } else { "" }
+      throw "$($_.Exception.Message) stdout=$stdout stderr=$stderr"
+    }
     $html = Invoke-WebRequest -Uri "$ApiBase/" -UseBasicParsing -TimeoutSec 2
     if ($html.StatusCode -ne 200 -or $html.Content.Length -lt 500) {
       throw "Main page did not return expected HTML for case $Name."
@@ -137,6 +152,11 @@ function Invoke-MainSmokeCase {
     } else {
       $env:HDU_OUTPUT_DIR = $oldOutputDir
     }
+    if ($null -eq $oldMainPort) {
+      Remove-Item Env:\HDU_MAIN_PORT -ErrorAction SilentlyContinue
+    } else {
+      $env:HDU_MAIN_PORT = $oldMainPort
+    }
   }
 }
 
@@ -144,7 +164,7 @@ Assert-File -Path $ExePath -Label "Release main exe"
 Assert-File -Path $SampleCoursePath -Label "Sample course data"
 
 if (-not (Test-PortFree)) {
-  throw "Port 6789 is already in use. Close the running main assistant first, then retry."
+  throw "Port $Port is already in use. Close the running main assistant or choose another port, then retry."
 }
 
 if (Test-Path -LiteralPath $TempRoot) {
