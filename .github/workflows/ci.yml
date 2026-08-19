@@ -1,0 +1,46 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: windows-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.23.x"
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Check repository layout
+        shell: powershell
+        run: powershell -ExecutionPolicy Bypass -File scripts/repository-layout-check.ps1
+
+      - name: Test main module
+        shell: powershell
+        run: go test -buildvcs=false ./...
+
+      - name: Test Smart Agent module
+        shell: powershell
+        working-directory: HDU-Smart-Course-Agent
+        run: go test -buildvcs=false ./...
+
+      - name: Test scheduler Worker
+        shell: powershell
+        run: node scripts/scheduler-worker-smoke.js
+
+      - name: Run deterministic teaching-system acceptance
+        shell: powershell
+        run: powershell -ExecutionPolicy Bypass -File scripts/testlab-acceptance.ps1

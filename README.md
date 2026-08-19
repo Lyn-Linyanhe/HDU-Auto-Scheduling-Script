@@ -175,6 +175,14 @@ node scripts\smart-agent-ui-smoke.js
 
 源码仓库说明见 [docs/TEST_DATA.md](docs/TEST_DATA.md)，release 包说明见 `TEST_DATA.md`。
 
+#### 持续集成
+
+GitHub Actions 会检查仓库布局，运行根目录和 Smart Agent 两个 Go module 的测试、排课 Worker smoke，以及确定性的本地教务系统验收。提交前可先运行布局门禁：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/repository-layout-check.ps1
+```
+
 排课 Worker 冒烟测试：
 
 ```bash
