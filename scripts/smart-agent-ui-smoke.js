@@ -175,7 +175,15 @@ async function waitForHTTP(url, timeoutMs = 15000) {
 
 async function terminateProcess(child) {
   if (!child || child.killed || child.exitCode !== null) return;
-  child.kill();
+  if (process.platform === 'win32') {
+    await new Promise((resolve) => {
+      const killer = spawn('taskkill', ['/pid', String(child.pid), '/t', '/f'], { stdio: 'ignore', windowsHide: true });
+      killer.once('exit', resolve);
+      killer.once('error', resolve);
+    });
+  } else {
+    child.kill();
+  }
   await Promise.race([
     new Promise((resolve) => child.once('exit', resolve)),
     sleep(3000),
@@ -438,9 +446,9 @@ async function captureScreenshotIfPossible() {
   return { skipped: false, path: screenshotPath, bytes: size };
 }
 
-async function startInteractiveBrowser(viewport, index) {
+async function startInteractiveBrowser(viewport, index, attempt) {
   const port = await findFreePort();
-  const profile = path.join(tempRoot, `interactive-profile-${index}`);
+  const profile = path.join(tempRoot, `interactive-profile-${index}-${attempt}`);
   const screenshot = path.join(tempRoot, `smart-agent-ui-${viewport.name}.png`);
   fs.mkdirSync(profile, { recursive: true });
   const browser = spawn(browserPath, [
@@ -597,12 +605,26 @@ async function captureInteractiveUI() {
   ];
   const results = [];
   for (const [index, viewport] of viewports.entries()) {
-    const session = await startInteractiveBrowser(viewport, index);
-    try {
-      results.push(await assertInteractiveUI(session));
-    } finally {
-      session.cdp.close();
-      await terminateProcess(session.browser);
+    let lastError;
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      let session;
+      try {
+        session = await startInteractiveBrowser(viewport, index, attempt);
+        results.push(await assertInteractiveUI(session));
+        lastError = null;
+        break;
+      } catch (error) {
+        lastError = error;
+        if (attempt === 0) writeStep(`Retrying ${viewport.name} interactive browser after transient failure: ${error.message || error}`);
+      } finally {
+        if (session) {
+          session.cdp.close();
+          await terminateProcess(session.browser);
+        }
+      }
+    }
+    if (lastError) {
+      throw lastError;
     }
   }
   return { skipped: false, results };
