@@ -85,6 +85,76 @@ git commit -m "docs: plan repository layout cleanup"
 
 ---
 
+### Task 0: Make Smart Agent UI Smoke Hermetic
+
+**Files:**
+- Modify: `scripts/smart-agent-ui-smoke.js:197-210`
+
+**Interfaces:**
+- Consumes: optional `HDU_COURSE_FIXTURE`, source fixture `testdata/course.sample.json`, release fixture `samples/course.sample.json`, and the existing temporary Smart Agent UI workspace.
+- Produces: a UI smoke test that runs in a clean source checkout, consumes testlab's exported fixture when provided, and remains runnable from a release package.
+
+- [ ] **Step 1: Reproduce the clean-checkout failure**
+
+Run from an isolated worktree that has no ignored root `course.json`:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/testlab-acceptance.ps1
+```
+
+Expected before the fix: FAIL at `smart-agent-ui-smoke.js` with `course.json or samples/course.sample.json is required`. Earlier mock export, Worker smoke, main UI, and Smart Agent E2E stages pass, proving the failure is fixture discovery rather than fixture generation.
+
+- [ ] **Step 2: Use deterministic fixture precedence**
+
+Replace the existing `sourceCourse` / `sampleCourse` selection in `prepareTempWorkspace()` with:
+
+```javascript
+  const courseCandidates = [
+    process.env.HDU_COURSE_FIXTURE
+      ? path.resolve(process.env.HDU_COURSE_FIXTURE)
+      : '',
+    path.join(root, 'course.json'),
+    path.join(root, 'testdata', 'course.sample.json'),
+    path.join(root, 'samples', 'course.sample.json'),
+  ].filter(Boolean);
+  const source = courseCandidates.find((candidate) => fs.existsSync(candidate));
+  if (!source) {
+    throw new Error(
+      'HDU_COURSE_FIXTURE, course.json, testdata/course.sample.json, or samples/course.sample.json is required for Smart Agent UI smoke test.',
+    );
+  }
+```
+
+Do not alter the fixture payload normalization, temporary workspace paths, browser checks, or cleanup behavior.
+
+- [ ] **Step 3: Verify the source and testlab paths turn green**
+
+Run:
+
+```powershell
+$previousFixture = [Environment]::GetEnvironmentVariable("HDU_COURSE_FIXTURE", "Process")
+Remove-Item Env:HDU_COURSE_FIXTURE -ErrorAction SilentlyContinue
+try {
+  node scripts/smart-agent-ui-smoke.js
+  powershell -ExecutionPolicy Bypass -File scripts/testlab-acceptance.ps1
+} finally {
+  if ($null -eq $previousFixture) {
+    Remove-Item Env:HDU_COURSE_FIXTURE -ErrorAction SilentlyContinue
+  } else {
+    $env:HDU_COURSE_FIXTURE = $previousFixture
+  }
+}
+```
+
+Expected: the direct source smoke uses `testdata/course.sample.json`; the full testlab acceptance uses its exported `HDU_COURSE_FIXTURE`; both pass.
+
+- [ ] **Step 4: Commit the hermetic smoke fix**
+
+```powershell
+git add scripts/smart-agent-ui-smoke.js
+git commit -m "test: make Smart Agent UI smoke hermetic"
+```
+
 ### Task 1: Lock the Existing Public Static-Asset Contract
 
 **Files:**
@@ -654,7 +724,7 @@ Run:
 git status --short --branch
 git diff --check
 git ls-tree --name-only HEAD
-git ls-files | rg "(^|/)(course|personal-schedule|target-schedule|hdu-current|login-config|execution-|agent-settings|run-killcourse)|\.exe$|\.zip$|\.db(-wal|-shm)?$"
+git ls-files | rg "(^|/)(course|course-export-diagnosis|personal-schedule|personal-schedule-live|target-schedule|login-config|live-schedule-sync|action-plan|agent-settings|execution-approval|execution-package|execution-log|fallback-recommendations)\.json$|(^|/)hdu-(current|target)-timetable[^/]*\.json$|(^|/)run-killcourse\.bat$|\.(exe|zip|db|db-wal|db-shm)$"
 ```
 
 Expected: the working tree is clean after the task commits; the root tree contains `web/` instead of eight frontend files and no root Codex brief; the final search reports no tracked personal data, executable, ZIP, or database.
