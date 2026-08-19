@@ -37,6 +37,7 @@ const state = {
   liveRefreshTimer: null,
   plan: null,
   generatedConfig: null,
+  generatedConfigWritten: false,
   configPreview: null,
   readiness: null,
   dryRun: null,
@@ -251,6 +252,7 @@ function applyRefreshSettings(settings) {
 function resetPlanState() {
   state.plan = null;
   state.generatedConfig = null;
+  state.generatedConfigWritten = false;
   state.configPreview = null;
   state.readiness = null;
   state.dryRun = null;
@@ -958,7 +960,7 @@ function renderAuthorization() {
   const dryRun = state.dryRun;
   const authorization = state.authorization;
   const executionPackage = state.executionPackage;
-  const canAuthorize = Boolean(dryRun?.canExecute && state.plan && state.generatedConfig);
+  const canAuthorize = Boolean(dryRun?.canExecute && state.plan && state.generatedConfig && els.writeConfig.checked);
   const authorizationExpired = Boolean(authorization && Date.parse(authorization.expiresAt || '') <= Date.now());
   els.authorizeExecution.disabled = !canAuthorize;
   els.confirmPhrase.disabled = !canAuthorize;
@@ -1497,6 +1499,7 @@ async function generatePlan({ stayOnCurrentStage = false } = {}) {
     if (!result.ok) throw new Error(result.error || '生成失败');
     state.plan = result.plan;
     state.generatedConfig = result.generatedConfig || null;
+    state.generatedConfigWritten = Boolean(result.configPath);
     state.configPreview = result.configPreview || null;
     state.readiness = result.readiness || null;
     state.dryRun = null;
@@ -1524,7 +1527,16 @@ async function generatePlan({ stayOnCurrentStage = false } = {}) {
 }
 
 async function runDryRun() {
-  if (!state.plan || !state.generatedConfig) return;
+  if (!state.plan) return;
+  if (!els.writeConfig.checked) {
+    els.statusMessage.textContent = '请先确认写入 KillCourse/config.json，dry-run 需要基于磁盘中的执行配置。';
+    els.writeConfig.focus();
+    return;
+  }
+  if (!state.generatedConfigWritten) {
+    const generated = await generatePlan({ stayOnCurrentStage: true });
+    if (!generated || !state.generatedConfig) return;
+  }
   els.dryRun.disabled = true;
   try {
     const result = await fetchJSON('/api/execution/dry-run', {

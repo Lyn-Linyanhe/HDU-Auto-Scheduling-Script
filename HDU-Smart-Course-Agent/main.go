@@ -510,19 +510,19 @@ type FallbackRecommendations struct {
 type KillCourseConfig struct {
 	CasLogin struct {
 		Username               string `json:"username"`
-		Password               string `json:"password"`
+		Password               string `json:"password,omitempty"`
 		DingDingQrLoginEnabled string `json:"dingDingQrLoginEnabled"`
 		Level                  string `json:"level"`
 	} `json:"cas_login"`
 	NewJWLogin struct {
 		Username string `json:"username"`
-		Password string `json:"password"`
+		Password string `json:"password,omitempty"`
 		Level    string `json:"level"`
 	} `json:"newjw_login"`
 	UserAgent string `json:"user_agent"`
 	Cookies   struct {
-		JSESSIONID string `json:"JSESSIONID"`
-		Route      string `json:"route"`
+		JSESSIONID string `json:"JSESSIONID,omitempty"`
+		Route      string `json:"route,omitempty"`
 		Enabled    string `json:"enabled"`
 	} `json:"cookies"`
 	Time struct {
@@ -537,7 +537,7 @@ type KillCourseConfig struct {
 	SMTPEmail struct {
 		Host     string `json:"host"`
 		Username string `json:"username"`
-		Password string `json:"password"`
+		Password string `json:"password,omitempty"`
 		To       string `json:"to"`
 		Enabled  string `json:"enabled"`
 	} `json:"smtp_email"`
@@ -1182,10 +1182,15 @@ func handlePlan(w http.ResponseWriter, r *http.Request) {
 		config, preview, configErr = buildKillCourseConfig(plan, p.killConfigPath)
 	}
 	if configErr == nil && !resp.ConfigBlocked {
-		resp.GeneratedConfig = &config
 		resp.ConfigPreview = &preview
 		readiness := buildExecutionReadiness(plan, config, preview, p)
 		resp.Readiness = &readiness
+		if req.WriteKillCourseConfig {
+			resp.GeneratedConfig = &config
+		} else {
+			redacted := redactedKillCourseConfig(config)
+			resp.GeneratedConfig = &redacted
+		}
 	} else if configErr != nil {
 		resp.Warnings = append(resp.Warnings, configErr.Error())
 	}
@@ -3197,6 +3202,14 @@ func defaultKillCourseConfig(term string) KillCourseConfig {
 	return cfg
 }
 
+func redactedKillCourseConfig(cfg KillCourseConfig) KillCourseConfig {
+	cfg.CasLogin.Password = ""
+	cfg.NewJWLogin.Password = ""
+	cfg.Cookies.JSESSIONID = ""
+	cfg.Cookies.Route = ""
+	cfg.SMTPEmail.Password = ""
+	return cfg
+}
 func loadAgentSettings(file string) (AgentSettings, error) {
 	var settings AgentSettings
 	data, err := os.ReadFile(file)

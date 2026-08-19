@@ -942,6 +942,170 @@ func TestHandlePlanReturnsPreviewWhenConfigIsBlocked(t *testing.T) {
 	}
 }
 
+func TestHandlePlanRedactsSecretsInDefaultResponse(t *testing.T) {
+	tmp := t.TempDir()
+	schedulerDir := filepath.Join(tmp, "Scheduler")
+	killDir := filepath.Join(tmp, "KillCourse")
+	if err := os.MkdirAll(schedulerDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(killDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	all := fixturePayload([]map[string]any{
+		{"displayCode": "(2026-2027-1)-A0001001-01", "courseCode": "(2026-2027-1)-A0001001", "kcmc": "\u6570\u5b66", "jzgxx": "\u5f20\u8001\u5e08", "sksj": "\u661f\u671f\u4e00\u7b2c1-2\u8282{1-17\u5468}", "xf": "3"},
+		{"displayCode": "(2026-2027-1)-A0001001-02", "courseCode": "(2026-2027-1)-A0001001", "kcmc": "\u6570\u5b66", "jzgxx": "\u674e\u8001\u5e08", "sksj": "\u661f\u671f\u4e8c\u7b2c1-2\u8282{1-17\u5468}", "xf": "3"},
+		{"displayCode": "(2026-2027-1)-A0002001-01", "courseCode": "(2026-2027-1)-A0002001", "kcmc": "\u82f1\u8bed", "jzgxx": "\u738b\u8001\u5e08", "sksj": "\u661f\u671f\u4e09\u7b2c1-2\u8282{1-17\u5468}", "xf": "2"},
+	})
+	current := fixturePayload([]map[string]any{
+		{"displayCode": "(2026-2027-1)-A0001001-01", "courseCode": "(2026-2027-1)-A0001001", "kcmc": "\u6570\u5b66", "jzgxx": "\u5f20\u8001\u5e08", "sksj": "\u661f\u671f\u4e00\u7b2c1-2\u8282{1-17\u5468}", "xf": "3"},
+		{"displayCode": "(2026-2027-1)-A0002001-01", "courseCode": "(2026-2027-1)-A0002001", "kcmc": "\u82f1\u8bed", "jzgxx": "\u738b\u8001\u5e08", "sksj": "\u661f\u671f\u4e09\u7b2c1-2\u8282{1-17\u5468}", "xf": "2"},
+	})
+	target := fixturePayload([]map[string]any{
+		{"displayCode": "(2026-2027-1)-A0001001-02", "courseCode": "(2026-2027-1)-A0001001", "kcmc": "\u6570\u5b66", "jzgxx": "\u674e\u8001\u5e08", "sksj": "\u661f\u671f\u4e8c\u7b2c1-2\u8282{1-17\u5468}", "xf": "3"},
+		{"displayCode": "(2026-2027-1)-A0002001-01", "courseCode": "(2026-2027-1)-A0002001", "kcmc": "\u82f1\u8bed", "jzgxx": "\u738b\u8001\u5e08", "sksj": "\u661f\u671f\u4e09\u7b2c1-2\u8282{1-17\u5468}", "xf": "2"},
+	})
+	mustWriteJSON(t, filepath.Join(schedulerDir, "course.json"), all)
+	mustWriteJSON(t, filepath.Join(schedulerDir, "personal-schedule.json"), current)
+	mustWriteJSON(t, filepath.Join(schedulerDir, "personal-schedule-live.json"), current)
+	mustWriteJSON(t, filepath.Join(tmp, "agent-settings.json"), AgentSettings{SchedulerDir: schedulerDir, KillCourseDir: killDir})
+
+	existing := defaultKillCourseConfig("2026-2027-1")
+	existing.CasLogin.Username = "24000000"
+	existing.CasLogin.Password = "cas-secret-password"
+	existing.NewJWLogin.Username = "24000001"
+	existing.NewJWLogin.Password = "newjw-secret-password"
+	existing.Cookies.Enabled = "1"
+	existing.Cookies.JSESSIONID = "secret-session-id"
+	existing.Cookies.Route = "secret-route"
+	existing.SMTPEmail.Enabled = "1"
+	existing.SMTPEmail.Password = "smtp-secret-password"
+	mustWriteJSON(t, filepath.Join(killDir, "config.json"), existing)
+
+	oldDir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(tmp); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(oldDir) })
+
+	body, err := json.Marshal(PlanRequest{TargetPayload: target})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/plan", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+	handlePlan(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("handlePlan status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	raw := rec.Body.Bytes()
+	for _, secret := range []string{"cas-secret-password", "newjw-secret-password", "secret-session-id", "secret-route", "smtp-secret-password"} {
+		if bytes.Contains(raw, []byte(secret)) {
+			t.Fatalf("default plan response leaked secret %q", secret)
+		}
+	}
+	for _, key := range []string{`"password"`, `"JSESSIONID"`, `"route"`} {
+		if bytes.Contains(raw, []byte(key)) {
+			t.Fatalf("default plan response should not contain sensitive key %s", key)
+		}
+	}
+	var response PlanResponse
+	if err := json.Unmarshal(raw, &response); err != nil {
+		t.Fatal(err)
+	}
+	if !response.OK || response.GeneratedConfig == nil {
+		t.Fatalf("expected a sanitized generated config in the response: %#v", response)
+	}
+	cfg := response.GeneratedConfig
+	if cfg.CasLogin.Password != "" || cfg.NewJWLogin.Password != "" || cfg.Cookies.JSESSIONID != "" || cfg.Cookies.Route != "" || cfg.SMTPEmail.Password != "" {
+		t.Fatalf("generated config in default response must be redacted: %#v", cfg)
+	}
+	if len(cfg.Course) == 0 {
+		t.Fatalf("redacted config should still contain course actions: %#v", cfg)
+	}
+	if response.ConfigPreview == nil || response.Readiness == nil {
+		t.Fatalf("default response should still include preview and readiness: %#v", response)
+	}
+}
+
+func TestHandlePlanReturnsFullConfigOnExplicitWrite(t *testing.T) {
+	tmp := t.TempDir()
+	schedulerDir := filepath.Join(tmp, "Scheduler")
+	killDir := filepath.Join(tmp, "KillCourse")
+	if err := os.MkdirAll(schedulerDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(killDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	all := fixturePayload([]map[string]any{
+		{"displayCode": "(2026-2027-1)-A0001001-01", "courseCode": "(2026-2027-1)-A0001001", "kcmc": "\u6570\u5b66", "jzgxx": "\u5f20\u8001\u5e08", "sksj": "\u661f\u671f\u4e00\u7b2c1-2\u8282{1-17\u5468}", "xf": "3"},
+		{"displayCode": "(2026-2027-1)-A0001001-02", "courseCode": "(2026-2027-1)-A0001001", "kcmc": "\u6570\u5b66", "jzgxx": "\u674e\u8001\u5e08", "sksj": "\u661f\u671f\u4e8c\u7b2c1-2\u8282{1-17\u5468}", "xf": "3"},
+		{"displayCode": "(2026-2027-1)-A0002001-01", "courseCode": "(2026-2027-1)-A0002001", "kcmc": "\u82f1\u8bed", "jzgxx": "\u738b\u8001\u5e08", "sksj": "\u661f\u671f\u4e09\u7b2c1-2\u8282{1-17\u5468}", "xf": "2"},
+	})
+	current := fixturePayload([]map[string]any{
+		{"displayCode": "(2026-2027-1)-A0001001-01", "courseCode": "(2026-2027-1)-A0001001", "kcmc": "\u6570\u5b66", "jzgxx": "\u5f20\u8001\u5e08", "sksj": "\u661f\u671f\u4e00\u7b2c1-2\u8282{1-17\u5468}", "xf": "3"},
+		{"displayCode": "(2026-2027-1)-A0002001-01", "courseCode": "(2026-2027-1)-A0002001", "kcmc": "\u82f1\u8bed", "jzgxx": "\u738b\u8001\u5e08", "sksj": "\u661f\u671f\u4e09\u7b2c1-2\u8282{1-17\u5468}", "xf": "2"},
+	})
+	target := fixturePayload([]map[string]any{
+		{"displayCode": "(2026-2027-1)-A0001001-02", "courseCode": "(2026-2027-1)-A0001001", "kcmc": "\u6570\u5b66", "jzgxx": "\u674e\u8001\u5e08", "sksj": "\u661f\u671f\u4e8c\u7b2c1-2\u8282{1-17\u5468}", "xf": "3"},
+		{"displayCode": "(2026-2027-1)-A0002001-01", "courseCode": "(2026-2027-1)-A0002001", "kcmc": "\u82f1\u8bed", "jzgxx": "\u738b\u8001\u5e08", "sksj": "\u661f\u671f\u4e09\u7b2c1-2\u8282{1-17\u5468}", "xf": "2"},
+	})
+	mustWriteJSON(t, filepath.Join(schedulerDir, "course.json"), all)
+	mustWriteJSON(t, filepath.Join(schedulerDir, "personal-schedule.json"), current)
+	mustWriteJSON(t, filepath.Join(schedulerDir, "personal-schedule-live.json"), current)
+	mustWriteJSON(t, filepath.Join(tmp, "agent-settings.json"), AgentSettings{SchedulerDir: schedulerDir, KillCourseDir: killDir})
+
+	existing := defaultKillCourseConfig("2026-2027-1")
+	existing.CasLogin.Username = "24000000"
+	existing.CasLogin.Password = "cas-secret-password"
+	existing.Cookies.Enabled = "1"
+	existing.Cookies.JSESSIONID = "secret-session-id"
+	existing.Cookies.Route = "secret-route"
+	existing.SMTPEmail.Password = "smtp-secret-password"
+	mustWriteJSON(t, filepath.Join(killDir, "config.json"), existing)
+
+	oldDir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(tmp); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(oldDir) })
+
+	body, err := json.Marshal(PlanRequest{TargetPayload: target, WriteKillCourseConfig: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/plan", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+	handlePlan(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("handlePlan status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	raw := rec.Body.Bytes()
+	for _, secret := range []string{"cas-secret-password", "secret-session-id", "secret-route", "smtp-secret-password"} {
+		if !bytes.Contains(raw, []byte(secret)) {
+			t.Fatalf("explicit write plan response must keep secret %q for the execution chain", secret)
+		}
+	}
+	onDisk, err := os.ReadFile(filepath.Join(killDir, "config.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, secret := range []string{"cas-secret-password", "secret-session-id", "smtp-secret-password"} {
+		if !bytes.Contains(onDisk, []byte(secret)) {
+			t.Fatalf("explicit write must persist secret %q to config.json", secret)
+		}
+	}
+	if !bytes.Contains(onDisk, []byte("(2026-2027-1)-A0001001-02")) {
+		t.Fatalf("explicit write must persist the new course action to config.json")
+	}
+}
 func TestBuildKillCourseConfigActions(t *testing.T) {
 	plan := ActionPlan{
 		Term:   "2026-2027-1",
