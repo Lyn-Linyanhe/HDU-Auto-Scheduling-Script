@@ -50,6 +50,13 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function waitForCDPEvent(cdp, method, timeoutMs = 15000) {
+  return Promise.race([
+    new Promise((resolve) => cdp.on(method, resolve)),
+    sleep(timeoutMs).then(() => { throw new Error(`Timed out waiting for CDP event ${method}`); }),
+  ]);
+}
+
 function findFreePort() {
   return new Promise((resolve, reject) => {
     const probe = net.createServer();
@@ -490,6 +497,9 @@ async function startInteractiveBrowser(viewport, index, attempt) {
   await cdp.send('Page.enable');
   await cdp.send('Runtime.enable');
   await cdp.send('Log.enable');
+  const loaded = waitForCDPEvent(cdp, 'Page.loadEventFired');
+  await cdp.send('Page.navigate', { url: appURL });
+  await loaded;
   await cdp.send('Emulation.setDeviceMetricsOverride', {
     width: viewport.width,
     height: viewport.height,
