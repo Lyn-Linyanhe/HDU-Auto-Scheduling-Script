@@ -1,6 +1,12 @@
 $ErrorActionPreference = "Stop"
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
+$legacyBriefCodePoints = @(
+  0x48, 0x44, 0x55, 0x667A, 0x80FD, 0x9009, 0x8BFE, 0x6267, 0x884C,
+  0x52A9, 0x624B, 0x2D, 0x43, 0x6F, 0x64, 0x65, 0x78, 0x9879, 0x76EE,
+  0x8BF4, 0x660E, 0x2E, 0x6D, 0x64
+)
+$legacyBriefName = -join ($legacyBriefCodePoints | ForEach-Object { [char]$_ })
 $requiredWebFiles = @(
   "web/index.html",
   "web/bootstrap.html",
@@ -20,7 +26,7 @@ $legacyRootFiles = @(
   "scheduler-worker.js",
   "shared.js",
   "styles.css",
-  "HDU智能选课执行助手-Codex项目说明.md"
+  $legacyBriefName
 )
 $privateLeafNames = @(
   "course.json",
@@ -41,7 +47,7 @@ $privateLeafNames = @(
 )
 $privatePathPatterns = @(
   "(^|/)hdu-(current|target)-timetable[^/]*\.json$",
-  "(^|/)(HDU-Smart-Course-Agent|选课脚本)/config\.json$",
+  "(^|/)(HDU-Smart-Course-Agent|\u9009\u8bfe\u811a\u672c)/config\.json$",
   "^(dist|release)/",
   "\.(exe|zip|db|db-wal|db-shm|log|xlsx|xls)$",
   "\.bak-[^/]+$"
@@ -59,7 +65,7 @@ try {
     throw "Files must not remain at repository root: $($stale -join ', ')"
   }
 
-  $tracked = @(git ls-files)
+  $tracked = @(git -c core.quotepath=false ls-files)
   if ($LASTEXITCODE -ne 0) {
     throw "git ls-files failed"
   }
