@@ -89,6 +89,7 @@ git commit -m "docs: plan repository layout cleanup"
 
 **Files:**
 - Modify: `scripts/smart-agent-ui-smoke.js:197-210`
+- Modify: `docs/superpowers/plans/2026-08-20-repository-presentation-and-layout-cleanup.md` when a clean-worktree RED/GREEN command reveals a missing prerequisite.
 
 **Interfaces:**
 - Consumes: optional `HDU_COURSE_FIXTURE`, source fixture `testdata/course.sample.json`, release fixture `samples/course.sample.json`, and the existing temporary Smart Agent UI workspace.
@@ -164,7 +165,7 @@ Expected: the direct source smoke uses `testdata/course.sample.json`; the full t
 - [ ] **Step 4: Commit the hermetic smoke fix**
 
 ```powershell
-git add scripts/smart-agent-ui-smoke.js
+git add scripts/smart-agent-ui-smoke.js docs/superpowers/plans/2026-08-20-repository-presentation-and-layout-cleanup.md
 git commit -m "test: make Smart Agent UI smoke hermetic"
 ```
 
