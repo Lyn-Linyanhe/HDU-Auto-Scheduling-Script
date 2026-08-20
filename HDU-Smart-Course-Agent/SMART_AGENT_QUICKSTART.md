@@ -1,6 +1,6 @@
 # HDU-Smart-Course-Agent 快速开始
 
-这个工具用于把排课助手导出的目标课表转换成 `HDU-KillCourse/config.json` 和执行启动包。它默认不会真实执行选课或退课。
+这个工具用于把排课助手导出的目标课表转换成 `HDU-KillCourse/config.json` 和执行启动包。它默认不会自动执行选课或退课；获得授权票据后，你可以选择点击“一键执行”让内置执行器直接执行，也可以继续走手动启动包流程。
 
 ## 目录准备
 
@@ -41,11 +41,17 @@ HDU-Smart-Course-Agent-Workspace/
 1. 勾选“确认写入 KillCourse/config.json”。
 2. 点击“更新配置并运行安全检查”。这一步不会真实选课或退课。
 3. 按页面提示输入确认短语，生成 `execution-approval.json`。
-4. 点击“生成启动包”，得到：
+4. 生成授权票据后，可选择“内置一键执行（当前计划）”：
+   - 不勾选“蹲课模式”：按当前计划执行一遍选课/退课。
+   - 勾选“蹲课模式”：按配置间隔轮询余量，有余量即自动选课。
+   - 执行状态按 1.5 秒轮询 `api/execution/status` 并写入 `execution-log.json`；执行中可随时“停止执行”。
+   - 只有存在课程库 `course.json`、可用的登录凭据、未过期的授权票据时，“一键执行”才可用。
+   也可以继续原有的手动方式：
+5. 点击“生成启动包”，得到：
    - `run-killcourse.bat`
    - `execution-runbook.md`
    - `execution-package.json`
-5. 手动运行 `run-killcourse.bat`。
+6. 手动运行 `run-killcourse.bat`。
 
 启动包会明确记录本次使用的绝对工作目录、`config.json`、启动入口和 `log_files/app.log`，解析执行结果时会从生成启动包时记录的日志偏移开始，避免混入历史运行记录。
 
@@ -57,11 +63,12 @@ HDU-Smart-Course-Agent-Workspace/
 
 ## 安全边界
 
-- Smart Agent 不会自动运行 KillCourse。
+- 内置一键执行只在你明确点击按钮、持有未过期授权票据、且存在课程库与登录凭据时才会真正执行；默认不自动触发。
+- 手动启动包流程不会自动运行 KillCourse。
 - `run-killcourse.bat` 启动前会先暂停一次，防止误触。
 - KillCourse 自身还会等待一次 Enter；只有你手动按 Enter 后，才会进入真实执行。
 - 包含退课动作时，请再次确认风险：如果新教学班未成功选上，原课程可能已经被退掉。
 - Smart Agent 不保存教务账号、密码或浏览器 Cookie。主站重启后，需重新完成登录才能刷新个人课表。
 - 重写配置时会保留最新 `HDU-KillCourse-main` 支持的 `user_agent`、`ClientBodyConfigEnabled` 和 `CrossGradeEnabled` 字段，只替换本次计划的 `course` 和学年学期。
-- 当前适配的 KillCourse 版本为 `v1.4.9`；Smart Agent 使用本机单独配置的 `HDU-KillCourse-main` 目录，不会把两个项目源码合并。
+- 当前适配的 KillCourse 版本为 `v1.4.9`；本仓库在 `HDU-Smart-Course-Agent/third_party/HDU-KillCourse` vendored 了该模块（Apache-2.0，含少量可测试性/日志补丁，见其中 NOTICE），内置一键执行直接使用这份代码；手动启动包流程仍可指向你本机的 `HDU-KillCourse-main` 目录。
 - 手动运行 KillCourse 并解析日志后，若检测到选课或退课成功，Smart Agent 会立即刷新个人课表；刷新失败仍保留上一次成功快照。

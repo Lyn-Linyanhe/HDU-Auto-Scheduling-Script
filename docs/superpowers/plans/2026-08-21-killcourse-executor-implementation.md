@@ -32,7 +32,7 @@
 - Consumes: 外部目录 `E:\fascinating project\HDU-KillCourse-main`（module `github.com/cr4n5/HDU-KillCourse`，v1.4.9 附近）
 - Produces: `github.com/cr4n5/HDU-KillCourse` 作为本地 replace module 可被 `HDU-Smart-Course-Agent` import
 
-- [ ] **Step 1: 复制上游源码（仅白名单）**
+- [x] **Step 1: 复制上游源码（仅白名单）**
 
 ```powershell
 $src='E:\fascinating project\HDU-KillCourse-main'; $dst='E:\fascinating project\HDU-Auto-Scheduling-Script\HDU-Smart-Course-Agent\third_party\HDU-KillCourse'
@@ -43,18 +43,18 @@ Copy-Item "$src\go.mod","$src\go.sum","$src\LICENSE","$src\config.example.json" 
 
 禁止复制：`config.json`、`cmd/`、`Doc/`、`.github/`、`README.md`（另写本仓库版本）。
 
-- [ ] **Step 2: 写 NOTICE 注明出处与修改**
+- [x] **Step 2: 写 NOTICE 注明出处与修改**
 
 `third_party/HDU-KillCourse/NOTICE`：声明源码来自 cr4n5/HDU-KillCourse（Apache-2.0），本仓库对其 client/course 包做了可测试性与错误语义修改，修改点列表随 Task 2 更新。
 
-- [ ] **Step 3: 修改 `HDU-Smart-Course-Agent/go.mod`**
+- [x] **Step 3: 修改 `HDU-Smart-Course-Agent/go.mod`**
 
 ```go
 require github.com/cr4n5/HDU-KillCourse v1.4.9
 replace github.com/cr4n5/HDU-KillCourse => ./third_party/HDU-KillCourse
 ```
 
-- [ ] **Step 4: 编译验证**
+- [x] **Step 4: 编译验证**
 
 ```powershell
 cd HDU-Smart-Course-Agent; go build ./... ; go vet ./...
@@ -62,7 +62,7 @@ cd HDU-Smart-Course-Agent; go build ./... ; go vet ./...
 
 Expected: 通过（当前无 import，验证 replace 可解析）。
 
-- [ ] **Step 5: 提交**
+- [x] **Step 5: 提交**
 
 `git add HDU-Smart-Course-Agent/third_party HDU-Smart-Course-Agent/go.mod` → commit `build(agent): vendor HDU-KillCourse v1.4.9`.
 
@@ -81,7 +81,7 @@ Expected: 通过（当前无 import，验证 replace 可解析）。
 - Consumes: `client.NewClient(cfg)`；`client.Client.Get/Post`
 - Produces: `client.BaseJWURL`、`client.BaseSSOURL` 包级变量（测试可改）；`func (c *Client) SetHTTPClient(hc *http.Client)`；`course.SelectCourse/CancelCourse` 失败返回 error；`course.HandleCourse` 对 nil `ClientBodyConfig` 返回 error 而非 panic
 
-- [ ] **Step 1: 写失败测试（client 注入）**
+- [x] **Step 1: 写失败测试（client 注入）**
 
 ```go
 // client_test.go
@@ -101,11 +101,11 @@ func TestNewClientUsesInjectedHTTPClient(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: 运行确认 RED**
+- [x] **Step 2: 运行确认 RED**
 
 `go test ./client/ -run TestNewClientUsesInjectedHTTPClient` → 编译失败（SetHTTPClient 不存在）。
 
-- [ ] **Step 3: 实现补丁**
+- [x] **Step 3: 实现补丁**
 
 ```go
 // client.go
@@ -116,24 +116,24 @@ func (c *Client) SetHTTPClient(hc *http.Client) { c.client = hc }
 
 `service.go` 所有硬编码 URL 替换为 `BaseJWURL+"/..."` / `BaseSSOURL+"/..."`（保留原路径）；`SaveCookies/LoadCookies` 的 cookie 域改用 `BaseJWURL`。
 
-- [ ] **Step 4: 运行确认 GREEN**
+- [x] **Step 4: 运行确认 GREEN**
 
 `go test ./client/` → 通过。
 
-- [ ] **Step 5: 写失败测试（选课失败返回 error）**
+- [x] **Step 5: 写失败测试（选课失败返回 error）**
 
 ```go
 // killCourse_test.go（使用 httptest mock 选课接口返回 {"flag":"0","msg":"人数已满"}）
 func TestSelectCourseReturnsErrorOnFlagZero(...)
 ```
 
-- [ ] **Step 6: RED → Step 7: GREEN**
+- [x] **Step 6: RED → Step 7: GREEN**
 
 `killCourse.go` 中 `result.Flag == "0"` 分支与 else 分支返回 `fmt.Errorf("选课失败: %s", ...)`；`CancelCourse` 结果非 `"\"1\""` 时返回 error；`HandleCourse` 在 `c.ClientBodyConfig == nil` 时返回 error。
 
-- [ ] **Step 8: 更新 NOTICE（列出本任务修改点）**
+- [x] **Step 8: 更新 NOTICE（列出本任务修改点）**
 
-- [ ] **Step 9: 提交**
+- [x] **Step 9: 提交**
 
 `git add third_party/...` → commit `fix(killcourse): make client injectable and surface select/drop failures`.
 
@@ -150,10 +150,10 @@ func TestSelectCourseReturnsErrorOnFlagZero(...)
 - Consumes: Task 2 的 `BaseJWURL/BaseSSOURL` 注入能力
 - Produces: mock 路由 `/xsxk/zzxkyzb_cxZzxkYzbIndex.html`（选课配置 HTML）、`/kbcx/xskbcx_cxXsgrkb.html`（GetStuInfo）、`/xsxk/zzxkyzbjk_cxJxbWithKchZzxkYzb.html`、`/xsxk/zzxkyzbjk_xkBcZyZzxkYzb.html`（选课 flag=1/0）、`/xsxk/zzxkyzb_tuikBcZzxkYzb.html`（退课 `"1"`）
 
-- [ ] **Step 1: 写 mock 路由（按 Helmholtz 报告 §6 的请求/响应 shape）**
-- [ ] **Step 2: 新建 `testdata/killcourse.course.sample.json`（从 course.sample.json 转换并补 kch_id/jxb_id/jxbzc/kklxmc）**
+- [x] **Step 1: 写 mock 路由（按 Helmholtz 报告 §6 的请求/响应 shape）**
+- [x] **Step 2: 新建 `testdata/killcourse.course.sample.json`**
 - [ ] **Step 3: 验收脚本新增 `killcourse-select`/`killcourse-drop` 场景（调用一个 Go 冒烟程序或 `go test` 集成测试）**
-- [ ] **Step 4: 提交**
+- [x] **Step 4: 提交**
 
 ---
 
@@ -175,8 +175,8 @@ func (e *Executor) RunOnce(ctx context.Context, plan map[string]string) ([]Execu
 func (e *Executor) StartWait(ctx context.Context, intervalSec int, done <-chan struct{}) ([]ExecutionEvent, error)
 ```
 
-- [ ] **Step 1-4: TDD 循环**（先写 mock testlab 集成测试 → RED → 实现 → GREEN）
-- [ ] **Step 5: 提交**
+- [x] **Step 1-4: TDD 循环**（executor 测试：选课成功/失败、退课成功、蹲课成功）
+- [x] **Step 5: 提交**
 
 ---
 
@@ -191,8 +191,8 @@ func (e *Executor) StartWait(ctx context.Context, intervalSec int, done <-chan s
   - `GET /api/execution/status`（返回当前运行状态/最近事件，从 execution-log.json 读）
   - `POST /api/execution/stop`（取消 context）
 
-- [ ] **Step 1-4: TDD**（先写 handler 测试：未授权 401、票据过期 403、正常 start 后 status 有 running 项、stop 后 canceled）
-- [ ] **Step 5: 提交**
+- [x] **Step 1-4: TDD**（handler 测试：缺凭据/过期票据/启动/状态/停止/单例执行）
+- [x] **Step 5: 提交**
 
 ---
 
@@ -208,8 +208,8 @@ func (e *Executor) StartWait(ctx context.Context, intervalSec int, done <-chan s
 - “停止”按钮 POST `/api/execution/stop`；
 - 执行成功且包含 select/drop 后触发现有 `refreshLiveSchedule({reason:'execution-success'})`。
 
-- [ ] **Step 1-4: 手工+脚本验收（沿用现有 main-ui-acceptance 模式扩展）**
-- [ ] **Step 5: 提交**
+- [ ] **Step 1-4: 手工+脚本验收**（随 Task 7 全量验收执行）
+- [x] **Step 5: 提交**
 
 ---
 

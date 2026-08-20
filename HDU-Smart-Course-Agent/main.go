@@ -25,8 +25,8 @@ import (
 	"sync"
 	"time"
 
-	agentexecutor "hdu-smart-course-agent/executor"
 	kcconfig "github.com/cr4n5/HDU-KillCourse/config"
+	agentexecutor "hdu-smart-course-agent/executor"
 )
 
 //go:embed web/*
@@ -1494,13 +1494,14 @@ func handleExecutionStart(w http.ResponseWriter, r *http.Request) {
 			_ = writeExecutionEventsLog(p, req.Authorization, nil, newErr)
 			return
 		}
-		var events []agentexecutor.ExecutionEvent
+		var runEvents []agentexecutor.ExecutionEvent
+		var runErr error
 		if req.WaitEnabled {
-			events, err = ex.StartWait(ctx, planMap, cfg.WaitCourse.Interval, nil)
+			runEvents, runErr = ex.StartWait(ctx, planMap, cfg.WaitCourse.Interval, nil)
 		} else {
-			events, err = ex.RunOnce(ctx, planMap)
+			runEvents, runErr = ex.RunOnce(ctx, planMap)
 		}
-		_ = writeExecutionEventsLog(p, req.Authorization, events, err)
+		_ = writeExecutionEventsLog(p, req.Authorization, runEvents, runErr)
 	}()
 
 	writeJSON(w, ExecutionStartResponse{OK: true, Started: true, TicketID: req.Authorization.TicketID, LogPath: p.executionLogPath})

@@ -40,6 +40,40 @@ function Stop-TestLab {
   }
 }
 
+function Start-TestLabForScenario {
+  param([string]$Name)
+  Stop-TestLab
+  $port = Get-Random -Minimum 22000 -Maximum 42000
+  $baseUrl = "http://127.0.0.1:$port"
+  $scenarioDir = Join-Path $TempRoot $Name
+  New-Item -ItemType Directory -Force -Path $scenarioDir | Out-Null
+  $script:ServerOut = Join-Path $scenarioDir "server.out.txt"
+  $script:ServerErr = Join-Path $scenarioDir "server.err.txt"
+  $fixtureDir = Join-Path $Root "testdata"
+  $serverArguments = "-mode serve -listen `"127.0.0.1:$port`" -scenario `"$Name`" -fixtures `"$fixtureDir`""
+  $script:Server = Start-Process -FilePath $LabExe -ArgumentList $serverArguments -PassThru -NoNewWindow -RedirectStandardOutput $script:ServerOut -RedirectStandardError $script:ServerErr
+  Wait-TestLab $baseUrl
+  return $baseUrl
+}
+
+function Invoke-KillCourseMockScenario {
+  param([string]$Name, [string]$ExpectSelectFlag)
+  $baseUrl = Start-TestLabForScenario -Name $Name
+  $selectIndex = Invoke-WebRequest -Method Get -Uri "$baseUrl/xsxk/zzxkyzb_cxZzxkYzbIndex.html" -UseBasicParsing -TimeoutSec 5
+  Assert-True ($selectIndex.Content -match "xkkz01") "Scenario $Name select-index page is missing XkkzId."
+  $doJxbRawText = (Invoke-WebRequest -Method Post -Uri "$baseUrl/xsxk/zzxkyzbjk_cxJxbWithKchZzxkYzb.html" -UseBasicParsing -TimeoutSec 5).Content
+  [System.Reflection.Assembly]::LoadWithPartialName("System.Web.Extensions") | Out-Null
+  $serializer = New-Object System.Web.Script.Serialization.JavaScriptSerializer
+  $doJxb = @($serializer.DeserializeObject($doJxbRawText))
+  Assert-True ($doJxb.Count -ge 2) "Scenario $Name do_jxb_id list is too small ($doJxbRawText)."
+  Assert-True (@($doJxb | Where-Object { $_.do_jxb_id -eq "do-kill-jxb-01" }).Count -eq 1) "Scenario $Name do_jxb_id mapping is missing."
+  $select = Invoke-RestMethod -Method Post -Uri "$baseUrl/xsxk/zzxkyzbjk_xkBcZyZzxkYzb.html" -TimeoutSec 5
+  Assert-True ($select.flag -eq $ExpectSelectFlag) "Scenario $Name select flag=$($select.flag), want $ExpectSelectFlag."
+  $drop = Invoke-RestMethod -Method Post -Uri "$baseUrl/xsxk/zzxkyzb_tuikBcZzxkYzb.html" -TimeoutSec 5
+  Assert-True ("$drop" -eq "1") "Scenario $Name drop result is not \"1\": $drop"
+  Stop-TestLab
+}
+
 function Wait-TestLab {
   param([string]$BaseUrl)
   $deadline = (Get-Date).AddSeconds(12)
@@ -129,6 +163,8 @@ try {
   Invoke-Scenario -Name "empty-course" -ExpectedSuccess $false -ExpectedDiagnosis $true | Out-Null
   Invoke-Scenario -Name "timeout" -ExpectedSuccess $false | Out-Null
   Invoke-Scenario -Name "personal-failure" -ExpectedSuccess $true -ExpectedPersonal $false | Out-Null
+  Invoke-KillCourseMockScenario -Name "killcourse" -ExpectSelectFlag "1"
+  Invoke-KillCourseMockScenario -Name "killcourse-fail" -ExpectSelectFlag "0"
 
   Write-Step "Using mock-exported course data in the scheduler worker smoke test..."
   $env:HDU_COURSE_FIXTURE = Join-Path $successDir "course.json"

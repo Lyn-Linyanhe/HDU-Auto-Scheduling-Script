@@ -80,12 +80,9 @@ func serve(listen, scenario, fixtureDir string) error {
 	if err != nil {
 		return err
 	}
-	killCourseKC := fixture{}
-	if scenario == "killcourse" || scenario == "killcourse-fail" {
-		killCourseKC, err = readFixture(filepath.Join(fixtureDir, "killcourse.course.sample.json"))
-		if err != nil {
-			return err
-		}
+	killCourseKC, err := loadKillCourseFixture(fixtureDir)
+	if err != nil {
+		return err
 	}
 	key, err := newPublicKey()
 	if err != nil {
@@ -332,6 +329,14 @@ func readFixture(name string) (fixture, error) {
 		return fixture{}, fmt.Errorf("fixture %s has no items", name)
 	}
 	return value, nil
+}
+
+func loadKillCourseFixture(fixtureDir string) (fixture, error) {
+	path := filepath.Join(fixtureDir, "killcourse.course.sample.json")
+	if _, err := os.Stat(path); err != nil {
+		return fixture{}, nil
+	}
+	return readFixture(path)
 }
 
 func newPublicKey() (string, error) {

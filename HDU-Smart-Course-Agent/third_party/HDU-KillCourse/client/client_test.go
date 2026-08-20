@@ -31,7 +31,6 @@ func TestNewClientUsesInjectedHTTPClient(t *testing.T) {
 	}
 }
 
-
 func TestGetStuInfoForTermUsesProvidedTerm(t *testing.T) {
 	var gotQuery string
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -59,4 +58,3 @@ func TestGetStuInfoForTermUsesProvidedTerm(t *testing.T) {
 		t.Fatalf("student info not stored: NjdmIDXs=%q ZyhIDXs=%q", c.NjdmIDXs, c.ZyhIDXs)
 	}
 }
-

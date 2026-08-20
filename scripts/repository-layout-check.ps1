@@ -48,6 +48,7 @@ $privateLeafNames = @(
 $privatePathPatterns = @(
   "(^|/)hdu-(current|target)-timetable[^/]*\.json$",
   "(^|/)(HDU-Smart-Course-Agent|\u9009\u8bfe\u811a\u672c)/config\.json$",
+  "third_party/HDU-KillCourse/config\.json$",
   "^(dist|release)/",
   "\.(exe|zip|db|db-wal|db-shm|log|xlsx|xls)$",
   "\.bak-[^/]+$"

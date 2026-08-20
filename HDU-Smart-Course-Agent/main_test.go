@@ -13,8 +13,8 @@ import (
 	"testing"
 	"time"
 
-	agentexecutor "hdu-smart-course-agent/executor"
 	kcconfig "github.com/cr4n5/HDU-KillCourse/config"
+	agentexecutor "hdu-smart-course-agent/executor"
 )
 
 func fixturePayload(items []map[string]any) CoursePayload {

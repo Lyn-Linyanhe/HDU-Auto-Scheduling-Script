@@ -4,10 +4,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"regexp"
 	"strings"
 	"time"
-	"net/url"
 
 	"github.com/antchfx/htmlquery"
 	"github.com/cr4n5/HDU-KillCourse/util"

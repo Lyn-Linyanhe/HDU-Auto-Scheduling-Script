@@ -6,6 +6,11 @@ The repository contains the Go source, frontend source under `web/`, tests, dete
 
 `HDU-Smart-Course-Agent/` is an intentional part of this monorepo. It keeps its own Go module, but it is not a second repository.
 
+`HDU-Smart-Course-Agent/third_party/HDU-KillCourse/` is a vendored copy of the
+Apache-2.0 `cr4n5/HDU-KillCourse` module (see `NOTICE` inside that directory for
+the local patch list). `HDU-Smart-Course-Agent/executor/` wraps that client so
+the agent can select/drop/wait for courses in-process.
+
 `docs/superpowers/` contains dated engineering specs and implementation plans. Paths and status statements in those records describe the repository at the time they were written.
 
 The unified main program serves `cmd/course-exporter/web/` at `/exporter/`. That web directory is a shared runtime source dependency and must not be removed as unused legacy code; the standalone `cmd/course-exporter` Go command remains a compatibility and development entry.
@@ -19,7 +24,9 @@ The following files are local runtime data or generated output and must not be c
 - browser profiles and their database files;
 - `dist/`, `release/`, `.gocache/`, temporary test folders, executables, ZIP files, and private notes.
 
-The real `HDU-KillCourse-main` directory is an external dependency. It is configured locally and is not copied into this repository.
+The real `HDU-KillCourse-main` directory (outside this repository) was the
+source for the vendored copy above. The vendored copy is the only version
+committed, so `go build` does not depend on that local directory.
 
 ## Release Flow
 
@@ -32,4 +39,7 @@ The tag, `VERSION`, package directory, ZIP name, and manifest version must match
 
 ## Current Publishing State
 
-The repository `master` is at version `0.5.3`. The local `release/` directory may contain the matching package, while GitHub Releases can lag behind the source branch. Before publishing, rebuild the package from the exact release commit and verify its manifest and checksums.
+The repository `master` is at version `0.5.4`. The local `release/` directory
+may contain the matching package, while GitHub Releases can lag behind the
+source branch. Before publishing, rebuild the package from the exact release
+commit and verify its manifest and checksums.

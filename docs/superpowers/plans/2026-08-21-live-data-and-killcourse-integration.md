@@ -161,3 +161,15 @@
 5. **P4（稳定强化）**：重登退避、轮询频率限制、接口变更诊断增强（按真实反馈迭代）。
 
 > 备注：行政班课表与实时人数的“真实接口路径”需要在真实登录会话下抓包确认；本文档中的候选路径基于正方教务通用约定，实施第一步应先用诊断工具验证。
+
+---
+
+## 五、P1 落地记录（2026-08-21）
+
+- vendor：`HDU-Smart-Course-Agent/third_party/HDU-KillCourse`（Apache-2.0，见 `NOTICE` 修改清单）。
+- executor：`HDU-Smart-Course-Agent/executor`（`RunOnce`/`StartWait`，登录走 `LoginSave` 不落盘 cookies）。
+- API：`/api/execution/start|status|stop`，复用 dry-run → 授权票据（15 分钟过期）门控；单例执行。
+- 前端：执行准备页新增“内置一键执行（当前计划）”与“蹲课模式”，1.5s 轮询状态并写入 `execution-log.json`。
+- testlab：新增 KillCourse 协议 mock 路由与 `killcourse`/`killcourse-fail` 场景；`testlab-acceptance.ps1` 全绿。
+- 仓库布局检查：新增 `third_party/HDU-KillCourse/config.json` 拒绝规则并通过负向测试。
+- 真实环境执行仍需用户手工确认后由“一键执行”触发；P2–P4 另行排期。

@@ -12,6 +12,7 @@ $forbiddenPaths = @(
   "data/legacy.xls",
   "course.json.bak-20260820",
   "HDU-Smart-Course-Agent/config.json",
+  "HDU-Smart-Course-Agent/third_party/HDU-KillCourse/config.json",
   "$killCourseDirName/config.json",
   "execution-runbook.md",
   "dist/generated.txt",
