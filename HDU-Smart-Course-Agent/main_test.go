@@ -2561,3 +2561,290 @@ func containsString(values []string, target string) bool {
 	}
 	return false
 }
+
+func iptr(value int) *int   { return &value }
+func bptr(value bool) *bool { return &value }
+
+func TestMapCapacityRowDetectsCandidateShapes(t *testing.T) {
+	observedAt := "2026-08-21T12:00:00+08:00"
+	tests := []struct {
+		name          string
+		raw           map[string]any
+		display       string
+		course        string
+		capacity      int
+		enrolled      int
+		selected      int
+		remaining     int
+		hasCap        bool
+		hasEnrolled   bool
+		hasSelected   bool
+		hasRemaining  bool
+	}{
+		{
+			name:         "zhengfang strings",
+			raw:          map[string]any{"jxbmc": "(2026-2027-1)-A0001001-01", "kcmc": "高等数学A", "rl": "60", "xkrs": "10", "skrs": "9"},
+			display:      "(2026-2027-1)-A0001001-01",
+			course:       "高等数学A",
+			capacity:     60, enrolled: 9, selected: 10, remaining: 50,
+			hasCap: true, hasEnrolled: true, hasSelected: true, hasRemaining: true,
+		},
+		{
+			name:         "numeric values compute remaining",
+			raw:          map[string]any{"jxbmc": "SEC-01", "rl": 80.0, "xkrs": 15.0},
+			display:      "SEC-01",
+			course:       "未命名课程",
+			capacity:     80, selected: 15, remaining: 65,
+			hasCap: true, hasSelected: true, hasRemaining: true,
+		},
+		{
+			name:         "explicit remaining preserved",
+			raw:          map[string]any{"jxbmc": "SEC-02", "rl": "80", "xkrs": "15", "syl": "65"},
+			display:      "SEC-02",
+			capacity:     80, selected: 15, remaining: 65,
+			hasCap: true, hasSelected: true, hasRemaining: true,
+		},
+		{
+			name:         "alternative key names",
+			raw:          map[string]any{"jxbmc": "SEC-03", "jxbrl": "120", "jxbrs": "40", "xkrs": "38", "syrl": "82"},
+			display:      "SEC-03",
+			capacity:     120, enrolled: 40, selected: 38, remaining: 82,
+			hasCap: true, hasEnrolled: true, hasSelected: true, hasRemaining: true,
+		},
+		{
+			name: "empty row stays unknown",
+			raw:  map[string]any{},
+		},
+	}
+	assertInt := func(t *testing.T, label string, got *int, want int, present bool) {
+		t.Helper()
+		if !present {
+			if got != nil {
+				t.Fatalf("%s should be nil, got %d", label, *got)
+			}
+			return
+		}
+		if got == nil || *got != want {
+			t.Fatalf("%s = %v, want %d", label, gotIface(got), want)
+		}
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			item := mapCapacityRow(tc.raw, observedAt)
+			if item.Source != "live" || item.ObservedAt != observedAt {
+				t.Fatalf("source/observedAt mismatch: %+v", item)
+			}
+			if tc.display != "" && item.DisplayCode != tc.display {
+				t.Fatalf("display=%q want %q", item.DisplayCode, tc.display)
+			}
+			if tc.course != "" && item.CourseName != tc.course {
+				t.Fatalf("course=%q want %q", item.CourseName, tc.course)
+			}
+			assertInt(t, "capacity", item.Capacity, tc.capacity, tc.hasCap)
+			assertInt(t, "enrolled", item.Enrolled, tc.enrolled, tc.hasEnrolled)
+			assertInt(t, "selected", item.Selected, tc.selected, tc.hasSelected)
+			assertInt(t, "remaining", item.Remaining, tc.remaining, tc.hasRemaining)
+		})
+	}
+}
+
+func gotIface(value *int) any {
+	if value == nil {
+		return nil
+	}
+	return *value
+}
+
+func TestExtractCapacityRowsPrefersTmpListAndFallsBackToNested(t *testing.T) {
+	rows := extractCapacityRows([]byte(`{"flag":"1","tmpList":[{"jxbmc":"A","rl":"1"},{"jxbmc":"B","rl":"2"}],"other":[{"x":"1"}]}`))
+	if len(rows) != 2 || rows[0]["jxbmc"] != "A" || rows[1]["jxbmc"] != "B" {
+		t.Fatalf("unexpected rows: %+v", rows)
+	}
+	nested := extractCapacityRows([]byte(`{"data":{"list":[{"jxbmc":"N1"}]}}`))
+	if len(nested) != 1 || nested[0]["jxbmc"] != "N1" {
+		t.Fatalf("nested fallback failed: %+v", nested)
+	}
+	if rows := extractCapacityRows([]byte(`{"flag":"0"}`)); len(rows) != 0 {
+		t.Fatalf("expected no rows for empty response: %+v", rows)
+	}
+	if rows := extractCapacityRows([]byte(`not-json`)); len(rows) != 0 {
+		t.Fatalf("expected no rows for invalid json: %+v", rows)
+	}
+}
+
+func newLiveCapacityMockServer(t *testing.T, partDisplayBody string) *httptest.Server {
+	t.Helper()
+	key, err := rsa.GenerateKey(rand.Reader, 1024)
+	if err != nil {
+		t.Fatal(err)
+	}
+	modulus := base64.StdEncoding.EncodeToString(key.N.Bytes())
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/xtgl/login_slogin.html":
+			if r.Method == http.MethodGet {
+				_, _ = w.Write([]byte(`<input name="csrftoken" value="test-csrf">`))
+				return
+			}
+			http.SetCookie(w, &http.Cookie{Name: "JSESSIONID", Value: "mock", Path: "/"})
+			http.SetCookie(w, &http.Cookie{Name: "route", Value: "mock", Path: "/"})
+			_, _ = w.Write([]byte("login ok"))
+			return
+		case "/xtgl/login_getPublicKey.html":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"modulus":"` + modulus + `","exponent":"10001"}`))
+			return
+		case "/kbcx/xskbcx_cxXsgrkb.html":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"xsxx":{"NJDM_ID":"2026","ZYH_ID":"zyh-2026"}}`))
+			return
+		case "/xsxk/zzxkyzb_cxZzxkYzbPartDisplay.html":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(partDisplayBody))
+			return
+		}
+		t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+		http.NotFound(w, r)
+	}))
+}
+
+func TestHandleLiveCapacityRefreshWritesSnapshotAndReadServesLive(t *testing.T) {
+	server := newLiveCapacityMockServer(t, `{"tmpList":[{"jxbmc":"(2026-2027-1)-A0001001-01","kcmc":"高等数学A","rl":"60","xkrs":"10","skrs":"9"}]}`)
+	defer server.Close()
+	t.Setenv("HDU_KILLCOURSE_BASE_URL", server.URL)
+
+	p := writeCaptureWorkspace(t)
+	payload, err := json.Marshal(LiveCapacityRefreshRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rr := httptest.NewRecorder()
+	handleLiveCapacityRefresh(rr, httptest.NewRequest(http.MethodPost, "/api/course/live-capacity/refresh", bytes.NewReader(payload)))
+	var resp LiveCapacityRefreshResponse
+	if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if !resp.OK || resp.Count != 1 || resp.Rows != 1 || resp.QueryCount != 1 {
+		t.Fatalf("refresh failed: %+v", resp)
+	}
+	if _, statErr := os.Stat(p.liveCapacityPath); statErr != nil {
+		t.Fatalf("snapshot missing: %v", statErr)
+	}
+	snapshot, err := loadLiveCapacitySnapshot(p.liveCapacityPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(snapshot.Items) != 1 || snapshot.Items[0].Capacity == nil || *snapshot.Items[0].Capacity != 60 || snapshot.Items[0].Selected == nil || *snapshot.Items[0].Selected != 10 || snapshot.Items[0].Remaining == nil || *snapshot.Items[0].Remaining != 50 {
+		t.Fatalf("snapshot items wrong: %+v", snapshot.Items)
+	}
+
+	getRR := httptest.NewRecorder()
+	handleLiveCapacity(getRR, httptest.NewRequest(http.MethodGet, "/api/course/live-capacity", nil))
+	var capacityResponse CourseCapacityResponse
+	if err := json.NewDecoder(getRR.Body).Decode(&capacityResponse); err != nil {
+		t.Fatalf("decode get: %v", err)
+	}
+	if !capacityResponse.OK || capacityResponse.Source != "live" || capacityResponse.Stale {
+		t.Fatalf("live read wrong: %+v", capacityResponse)
+	}
+	if len(capacityResponse.Items) != 1 || capacityResponse.Items[0].Remaining == nil || *capacityResponse.Items[0].Remaining != 50 || capacityResponse.Items[0].Full == nil || *capacityResponse.Items[0].Full {
+		t.Fatalf("live items wrong: %+v", capacityResponse.Items)
+	}
+}
+
+func TestHandleLiveCapacityFallsBackToCourseSnapshot(t *testing.T) {
+	payload := fixturePayload([]map[string]any{
+		{
+			"displayCode": "(2026-2027-1)-A0001001-01",
+			"jxbmc":       "(2026-2027-1)-A0001001-01",
+			"kcmc":        "高等数学A",
+			"jxbrl":       "80",
+			"jxbrs":       "52",
+			"xkrs":        "51",
+		},
+	})
+	setupAgentHTTPWorkspace(t, payload)
+	rr := httptest.NewRecorder()
+	handleLiveCapacity(rr, httptest.NewRequest(http.MethodGet, "/api/course/live-capacity", nil))
+	var resp CourseCapacityResponse
+	if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if !resp.OK || resp.Source != "course.json" || !resp.Stale {
+		t.Fatalf("expected course.json fallback: %+v", resp)
+	}
+	if resp.Error == "" || len(resp.Warnings) == 0 {
+		t.Fatalf("expected a fallback explanation: %+v", resp)
+	}
+	if len(resp.Items) != 1 || resp.Items[0].Capacity == nil || *resp.Items[0].Capacity != 80 || resp.Items[0].Remaining == nil || *resp.Items[0].Remaining != 28 {
+		t.Fatalf("fallback items wrong: %+v", resp.Items)
+	}
+}
+
+func TestHandleLiveCapacityRefreshPreservesPreviousSnapshotOnFailure(t *testing.T) {
+	server := newLiveCapacityMockServer(t, `{"flag":"0","msg":"当前不属于选课阶段"}`)
+	defer server.Close()
+	t.Setenv("HDU_KILLCOURSE_BASE_URL", server.URL)
+
+	p := writeCaptureWorkspace(t)
+	previous := LiveCapacitySnapshot{
+		SchemaVersion: schemaVersion,
+		CapturedAt:    time.Now().Add(-time.Minute).Format(time.RFC3339),
+		Term:          "2026-1",
+		Source:        "live",
+		Items: []LiveCapacityItem{
+			{DisplayCode: "(2026-2027-1)-A0001001-01", CourseName: "高等数学A", Capacity: iptr(60), Selected: iptr(10), Remaining: iptr(50), Source: "live", ObservedAt: time.Now().Format(time.RFC3339)},
+		},
+	}
+	if err := writeJSONFile(p.liveCapacityPath, previous); err != nil {
+		t.Fatal(err)
+	}
+	payload, err := json.Marshal(LiveCapacityRefreshRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rr := httptest.NewRecorder()
+	handleLiveCapacityRefresh(rr, httptest.NewRequest(http.MethodPost, "/api/course/live-capacity/refresh", bytes.NewReader(payload)))
+	var resp LiveCapacityRefreshResponse
+	if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp.OK || resp.Error == "" {
+		t.Fatalf("expected refresh to fail with a reason: %+v", resp)
+	}
+	snapshot, err := loadLiveCapacitySnapshot(p.liveCapacityPath)
+	if err != nil {
+		t.Fatalf("previous snapshot should be preserved: %v", err)
+	}
+	if len(snapshot.Items) != 1 || snapshot.Items[0].Capacity == nil || *snapshot.Items[0].Capacity != 60 {
+		t.Fatalf("previous snapshot was lost: %+v", snapshot.Items)
+	}
+	getRR := httptest.NewRecorder()
+	handleLiveCapacity(getRR, httptest.NewRequest(http.MethodGet, "/api/course/live-capacity", nil))
+	var capacityResponse CourseCapacityResponse
+	if err := json.NewDecoder(getRR.Body).Decode(&capacityResponse); err != nil {
+		t.Fatalf("decode get: %v", err)
+	}
+	if capacityResponse.Source != "live" || len(capacityResponse.Items) != 1 {
+		t.Fatalf("get should still serve the last good live snapshot: %+v", capacityResponse)
+	}
+}
+
+func TestHandleLiveCapacityRefreshRejectsNonLoopbackBase(t *testing.T) {
+	t.Setenv("HDU_KILLCOURSE_BASE_URL", "http://example.com")
+	p := writeCaptureWorkspace(t)
+	_ = p
+	payload, err := json.Marshal(LiveCapacityRefreshRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rr := httptest.NewRecorder()
+	handleLiveCapacityRefresh(rr, httptest.NewRequest(http.MethodPost, "/api/course/live-capacity/refresh", bytes.NewReader(payload)))
+	var resp LiveCapacityRefreshResponse
+	if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp.OK || !strings.Contains(resp.Error, "回环") {
+		t.Fatalf("expected loopback rejection, got %+v", resp)
+	}
+}

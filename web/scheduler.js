@@ -3,12 +3,18 @@
   let courses = [];
   let selectedGroups = [];
   let solutions = [];
+  // Snapshot of the current generation round so 'restore deleted' can undo
+  // dismissals instantly instead of re-running the whole solver.
+  let dismissedBackup = null;
+  let uxConfirmResolve = null;
   let activeSolution = null;
   let selectedCourseId = '';
   let modalCourseId = '';
   let workerJobId = 0;
   let workerUnavailable = false;
   let schedulingBusy = false;
+  let searchDebounceTimer = null;
+  const expandedCourseGroups = new Set();
   let creditDataAvailable = true;
 
   const els = {
@@ -24,6 +30,10 @@
     candidatePage: document.getElementById('candidate-page'),
     tableCandidatePage: document.getElementById('table-candidate-page'),
     estimateText: document.getElementById('estimate-text'),
+    schedulerNotice: document.getElementById('scheduler-notice'),
+    uxConfirm: document.getElementById('ux-confirm'),
+    uxConfirmMessage: document.getElementById('ux-confirm-message'),
+    uxConfirmOk: document.getElementById('ux-confirm-ok'),
     timetable: document.getElementById('timetable'),
     summaryChips: document.getElementById('summary-chips'),
     clearSelected: document.getElementById('clear-selected'),
@@ -152,6 +162,7 @@
     state.candidatePreviewEnabled = false;
     activeSolution = null;
     solutions = [];
+    dismissedBackup = null;
   }
 
   function rebuildSelection() {
@@ -244,7 +255,9 @@
     }
     const list = Array.isArray(data?.items) ? data.items : Array.isArray(data) ? data : [];
     if (!list.length) return;
-    const matched = list.map(matchImportedCourse).filter(Boolean);
+    const matchedAll = list.map(matchImportedCourse);
+    const matched = matchedAll.filter(Boolean);
+    state.importUnmatchedNames = matchedAll.map((course, index) => (course ? '' : importedEntryName(list[index]))).filter(Boolean).slice(0, 8);
     if (!matched.length) {
       state.personalScheduleAutoImported = true;
       state.baseScheduleName = '个人课表未匹配';
@@ -623,7 +636,9 @@
 
     els.courseList.innerHTML = grouped.map((group) => {
       const tags = [group.kind, group.credits ? `${formatCredit(group.credits)} 学分` : ''].filter(Boolean);
-      const itemsHtml = group.items.slice(0, 5).map((item) => {
+      const expanded = expandedCourseGroups.has(group.id);
+      const visibleItems = expanded ? group.items : group.items.slice(0, 5);
+      const itemsHtml = visibleItems.map((item) => {
         const selected = isSelected(item);
         const warnings = selected ? courseWarnings(item) : { time: false, sameBase: false };
         const warningClass = warnings.time ? 'has-time-conflict' : warnings.sameBase ? 'has-same-base' : '';
@@ -639,15 +654,28 @@
         </div>
       `;
       }).join('');
+      const moreButton = group.items.length > 5
+        ? `<button class="ghost-btn small group-more" type="button" data-group-more="${escapeHtml(group.id)}">${expanded ? '收起' : `查看全部 ${group.items.length} 个教学班`}</button>`
+        : '';
       return `
         <article class="course-card">
           <h4>${escapeHtml(group.name)}</h4>
           <div class="meta">${escapeHtml(group.id)} · ${escapeHtml(group.kind || '未知类型')} · ${group.items.length} 个教学班</div>
           <div class="tag-row">${tags.map((tag) => `<span class="tag">${escapeHtml(tag)}</span>`).join('')}</div>
           <div class="option-row">${itemsHtml}</div>
+          ${moreButton}
         </article>
       `;
     }).join('');
+
+    els.courseList.querySelectorAll('[data-group-more]').forEach((button) => {
+      button.addEventListener('click', () => {
+        const groupId = button.dataset.groupMore;
+        if (expandedCourseGroups.has(groupId)) expandedCourseGroups.delete(groupId);
+        else expandedCourseGroups.add(groupId);
+        renderCourseList();
+      });
+    });
 
     els.courseList.querySelectorAll('[data-toggle-course]').forEach((button) => {
       button.addEventListener('click', () => {
@@ -1026,6 +1054,9 @@
     els.baseSummary.textContent = `${state.baseScheduleName || '现有课表'}：${baseItems.length} 门，${formatCredit(credits)} 学分。`;
     if (state.importUnmatched) {
       els.baseSummary.textContent += `（${state.importUnmatched} 个条目未匹配到课程，未导入）`;
+      if (Array.isArray(state.importUnmatchedNames) && state.importUnmatchedNames.length) {
+        els.baseSummary.textContent += ` 未匹配：${state.importUnmatchedNames.join('、')}${state.importUnmatched > state.importUnmatchedNames.length ? '…' : ''}`;
+      }
     }
   }
 
@@ -1289,8 +1320,55 @@
     renderResults();
   }
 
+  function hideNotice() {
+    if (els.schedulerNotice) els.schedulerNotice.hidden = true;
+  }
+
+  function showNotice(message, retryAction) {
+    const notice = els.schedulerNotice;
+    if (!notice) return;
+    notice.hidden = false;
+    notice.textContent = '';
+    const text = document.createElement('span');
+    text.textContent = message;
+    notice.append(text);
+    if (typeof retryAction === 'function') {
+      const actions = document.createElement('span');
+      actions.className = 'notice-actions';
+      const retry = document.createElement('button');
+      retry.type = 'button';
+      retry.className = 'ghost-btn small';
+      retry.textContent = '重试';
+      retry.addEventListener('click', () => { hideNotice(); retryAction(); });
+      actions.append(retry);
+      notice.append(actions);
+    }
+  }
+
+  function openConfirm(question, okLabel) {
+    return new Promise((resolve) => {
+      const overlay = els.uxConfirm;
+      const message = els.uxConfirmMessage;
+      const ok = els.uxConfirmOk;
+      if (!overlay || !message || !ok) { resolve(true); return; }
+      message.textContent = question;
+      if (okLabel) ok.textContent = okLabel;
+      uxConfirmResolve = resolve;
+      overlay.hidden = false;
+      setTimeout(() => ok.focus(), 0);
+    });
+  }
+
+  function closeConfirm(value) {
+    if (els.uxConfirm) els.uxConfirm.hidden = true;
+    const resolve = uxConfirmResolve;
+    uxConfirmResolve = null;
+    if (resolve) resolve(value);
+  }
+
   async function estimateCandidates() {
     if (schedulingBusy) return;
+    hideNotice();
     persistState();
     const groups = candidateGroups();
     setSchedulingBusy(true);
@@ -1308,7 +1386,7 @@
       }
       persistState();
     } catch (error) {
-      els.estimateText.textContent = `估算失败：${error.message || error}`;
+      showNotice(`估算失败：${error.message || error}`, () => estimateCandidates());
     } finally {
       setSchedulingBusy(false);
     }
@@ -1316,6 +1394,7 @@
 
   async function generateCandidates() {
     if (schedulingBusy) return;
+    hideNotice();
     persistState();
     const groups = candidateGroups();
     setSchedulingBusy(true);
@@ -1324,13 +1403,15 @@
       const estimate = await runSchedulerWorker('estimate', groups, schedulerState(), 501);
       if (estimate.capped || estimate.count > 500) {
         const message = '当前候选课表过多，建议添加更多约束条件。是否仍然继续生成前 500 个候选方案？';
-        if (!window.confirm(message)) {
+        const proceed = await openConfirm(message, '继续生成');
+        if (!proceed) {
           els.estimateText.textContent = '已取消生成。建议添加更多约束条件后再试。';
           return;
         }
       }
       // A fresh generation starts a new round: release any previously dismissed candidates.
       state.dismissedCandidates = [];
+      dismissedBackup = null;
       els.estimateText.textContent = '正在生成候选课表...';
       const generated = await runSchedulerWorker('generate', groups, schedulerState(), 500);
       solutions = generated.results;
@@ -1348,7 +1429,7 @@
         renderDiagnostics(reasons);
       }
     } catch (error) {
-      els.estimateText.textContent = `生成失败：${error.message || error}`;
+      showNotice(`生成失败：${error.message || error}`, () => generateCandidates());
     } finally {
       setSchedulingBusy(false);
     }
@@ -1461,33 +1542,23 @@
   }
 
   async function restoreDismissedCandidates() {
-    if (!(state.dismissedCandidates || []).length) return;
+    if (!(state.dismissedCandidates || []).length || !dismissedBackup || !dismissedBackup.length) return;
     state.dismissedCandidates = [];
-    const groups = candidateGroups();
-    setSchedulingBusy(true);
-    els.estimateText.textContent = '正在恢复已删除候选...';
-    try {
-      const generated = await runSchedulerWorker('generate', groups, schedulerState(), 500);
-      solutions = generated.results;
-      state.candidateCursor = 0;
-      activeSolution = solutions[0] || null;
-      state.activeCandidate = activeSolution ? activeSolution.signature : '';
-      state.candidatePreviewEnabled = Boolean(activeSolution);
-      els.estimateText.textContent = generated.capped
-        ? `已恢复 ${solutions.length} 个候选（可能更多）。`
-        : `已恢复 ${solutions.length} 个候选方案。`;
-      persistState();
-      renderAll();
-    } catch (error) {
-      els.estimateText.textContent = `恢复失败：${error.message || error}`;
-    } finally {
-      setSchedulingBusy(false);
-    }
+    solutions = dismissedBackup.map((item) => item);
+    dismissedBackup = null;
+    state.candidateCursor = 0;
+    activeSolution = solutions[0] || null;
+    state.activeCandidate = activeSolution ? activeSolution.signature : '';
+    state.candidatePreviewEnabled = Boolean(activeSolution);
+    els.estimateText.textContent = `已恢复 ${solutions.length} 个候选方案（未重新求解，保持原有顺序）。`;
+    persistState();
+    renderAll();
   }
 
   function dismissCandidate() {
     const solution = currentSolution();
     if (!solution) return;
+    if (dismissedBackup === null) dismissedBackup = solutions.map((item) => item);
     const set = new Set(state.dismissedCandidates || []);
     set.add(solution.signature);
     state.dismissedCandidates = [...set];
@@ -1658,6 +1729,14 @@
     window.setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
 
+  function importedEntryName(entry) {
+    const name = HDU.firstText(entry.kcmc, entry.courseName, entry.name);
+    if (name) return name;
+    const section = HDU.firstText(entry.jxbmc, entry.sectionName, entry.displayCode);
+    if (section) return section;
+    return String(entry.id || '未知名目');
+  }
+
   function matchImportedCourse(imported) {
     const rawId = HDU.firstText(imported.jxb_id, imported.sectionId, imported.id);
     if (rawId) {
@@ -1677,7 +1756,9 @@
     const text = await file.text();
     const raw = JSON.parse(text);
     const list = Array.isArray(raw?.items) ? raw.items : Array.isArray(raw) ? raw : [];
-    const matched = list.map(matchImportedCourse).filter(Boolean);
+    const matchedAll = list.map(matchImportedCourse);
+    const matched = matchedAll.filter(Boolean);
+    state.importUnmatchedNames = matchedAll.map((course, index) => (course ? '' : importedEntryName(list[index]))).filter(Boolean).slice(0, 8);
     state.importUnmatched = Math.max(0, list.length - matched.length);
     state.baseCourseIds = [...new Set(matched.map((item) => item.id))];
     state.baseScheduleName = file.name.replace(/\.json$/i, '');
@@ -1706,6 +1787,7 @@
     state.baseScheduleName = '';
     state.personalScheduleAutoImported = false;
     state.importUnmatched = 0;
+    state.importUnmatchedNames = [];
     clearCandidateState();
     persistState();
     rebuildSelection();
@@ -1760,9 +1842,13 @@
 
   function wireEvents() {
     els.searchInput.addEventListener('input', () => {
-      state.query = els.searchInput.value;
-      persistState();
-      renderCourseList();
+      if (searchDebounceTimer) clearTimeout(searchDebounceTimer);
+      const value = els.searchInput.value;
+      searchDebounceTimer = setTimeout(() => {
+        state.query = value;
+        persistState();
+        renderCourseList();
+      }, 180);
     });
     els.lockedSearch.addEventListener('input', renderLockedSearchResults);
     [
@@ -1789,6 +1875,7 @@
       state.baseScheduleName = '';
       state.personalScheduleAutoImported = false;
       state.importUnmatched = 0;
+      state.importUnmatchedNames = [];
       clearCandidateState();
       persistState();
       rebuildSelection();
@@ -1796,6 +1883,13 @@
     });
     els.generate.addEventListener('click', generateCandidates);
     els.estimate.addEventListener('click', estimateCandidates);
+    if (els.uxConfirmOk) els.uxConfirmOk.addEventListener('click', () => closeConfirm(true));
+    if (els.uxConfirm) {
+      els.uxConfirm.querySelectorAll('[data-ux-confirm-cancel]').forEach((el) => el.addEventListener('click', () => closeConfirm(false)));
+    }
+    document.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape' && els.uxConfirm && !els.uxConfirm.hidden) closeConfirm(false);
+    });
     els.reloadCourse.addEventListener('click', loadCourses);
     els.candidatePrev.addEventListener('click', () => moveCandidate(-1));
     els.candidateNext.addEventListener('click', () => moveCandidate(1));

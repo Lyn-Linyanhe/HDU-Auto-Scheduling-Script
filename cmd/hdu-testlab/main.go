@@ -308,15 +308,29 @@ func (m *mockServer) handleKillDrop(w http.ResponseWriter, _ *http.Request) {
 	_, _ = io.WriteString(w, `"1"`)
 }
 
-// handlePartDisplay reports capacity for wait mode (tmpList non-empty).
+// handlePartDisplay reports capacity for wait mode (tmpList non-empty). Under the
+// capacity-fail scenario it answers like the school outside the selection period;
+// otherwise it passes through any capacity-like fields present in the fixture
+// (rl/xkrs/skrs/syl) so the live-capacity mapping layer sees realistic data.
 func (m *mockServer) handlePartDisplay(w http.ResponseWriter, _ *http.Request) {
+	if m.scenario == "capacity-fail" {
+		writeJSON(w, map[string]any{"flag": "0", "msg": "当前不属于选课阶段"})
+		return
+	}
+	capacityFields := []string{"kcmc", "jxbzc", "kklxdm", "rl", "xkrs", "skrs", "syl"}
 	items := make([]map[string]any, 0, len(m.killCourseKC.Items))
 	for _, item := range m.killCourseKC.Items {
 		jxbmc, _ := item["jxbmc"].(string)
 		if jxbmc == "" {
 			continue
 		}
-		items = append(items, map[string]any{"jxbmc": jxbmc})
+		row := map[string]any{"jxbmc": jxbmc}
+		for _, key := range capacityFields {
+			if value, ok := item[key]; ok {
+				row[key] = value
+			}
+		}
+		items = append(items, row)
 	}
 	writeJSON(w, map[string]any{"tmpList": items})
 }
@@ -354,7 +368,7 @@ func newPublicKey() (string, error) {
 
 func knownScenario(value string) bool {
 	switch value {
-	case "success", "bad-password", "forbidden", "malformed-course", "empty-course", "course-shape-drift", "timeout", "personal-failure", "killcourse", "killcourse-fail":
+	case "success", "bad-password", "forbidden", "malformed-course", "empty-course", "course-shape-drift", "timeout", "personal-failure", "killcourse", "killcourse-fail", "capacity-ok", "capacity-fail":
 		return true
 	default:
 		return false

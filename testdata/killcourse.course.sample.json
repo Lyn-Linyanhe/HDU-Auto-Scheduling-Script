@@ -17,7 +17,10 @@
       "kklxmc": "主修课程",
       "kch_id": "kill-kch-01",
       "jxbzc": "2026;202601",
-      "kklxdm": "01"
+      "kklxdm": "01",
+      "rl": "80",
+      "xkrs": "51",
+      "skrs": "52"
     },
     {
       "displayCode": "(2026-2027-1)-A0002001-01",
@@ -32,7 +35,11 @@
       "kklxmc": "通识选修课",
       "kch_id": "kill-kch-02",
       "jxbzc": "2026;202601",
-      "kklxdm": "10"
+      "kklxdm": "10",
+      "rl": "60",
+      "xkrs": "10",
+      "skrs": "9",
+      "syl": "50"
     }
   ]
 }

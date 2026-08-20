@@ -15,6 +15,10 @@ const state = {
   courseCapacityObservedAt: '',
   courseCapacitySourceUpdatedAt: '',
   courseCapacityStale: false,
+  courseCapacitySourceError: '',
+  courseCapacityError: '',
+  courseCapacityRefreshFailedAt: '',
+  courseCapacityRefreshInFlight: false,
   courseInspectorCode: '',
   courseSchedule: null,
   classOptions: [],
@@ -92,6 +96,8 @@ const els = {
   courseScheduleQuery: document.getElementById('course-schedule-query'),
   courseIntelDetail: document.getElementById('course-intel-detail'),
   courseCapacitySummary: document.getElementById('course-capacity-summary'),
+  capacityRefresh: document.getElementById('capacity-refresh'),
+  courseCapacityError: document.getElementById('course-capacity-error'),
   classScheduleResult: document.getElementById('class-schedule-result'),
   classOptionSelect: document.getElementById('class-option-select'),
   classScheduleQuery: document.getElementById('class-schedule-query'),
@@ -292,6 +298,15 @@ function statCard(label, value, ok) {
   `;
 }
 
+function liveCapacityStatusText() {
+  if (state.courseCapacitySource === 'live') {
+    const count = (state.courseCapacity || []).length;
+    return count ? `${count} 门实时` : '实时 0 门';
+  }
+  if (state.courseCapacitySource === 'course.json') return '快照';
+  return '未刷新';
+}
+
 function availableStage() {
   if (!state.targetPayload?.items?.length) return 1;
   if (!state.plan) return 2;
@@ -433,6 +448,7 @@ function renderStatus() {
     statCard('personal-schedule-live.json', s.livePersonalExists ? `${s.livePersonalCount || 0} 门` : '未同步', Boolean(s.livePersonalExists)),
     statCard('HDU-KillCourse', s.killCourseExists ? '已检测到' : '未检测到', s.killCourseExists),
     statCard('备选教学班', s.canFallback ? '可生成' : '缺少 course.json', s.canFallback),
+    statCard('实时容量', liveCapacityStatusText(), state.courseCapacitySource === 'live'),
   ].join('');
   renderSettings();
 }
@@ -492,7 +508,9 @@ function renderCourseDetail(item) {
     els.courseIntelDetail.classList.add('empty');
     els.courseIntelDetail.textContent = state.courseOptions.length ? '没有匹配的课程，请调整筛选条件。' : '暂未读取课程库。';
     els.courseCapacitySummary.classList.add('empty');
-    els.courseCapacitySummary.textContent = '容量和人数来自当前 course.json 本地快照，非实时；缺失时保持未知。';
+    els.courseCapacitySummary.textContent = '容量和人数来自 course.json 快照或教务实时快照；缺失时保持未知。';
+    renderCourseCapacityControls();
+    renderCourseCapacityFailure();
     return;
   }
 
@@ -529,16 +547,23 @@ function renderCourseDetail(item) {
     </article>
   `;
 
-  const source = state.courseCapacitySource || 'course.json 快照';
+  const isLive = state.courseCapacitySource === 'live';
+  const sourceLabel = isLive ? '实时' : '快照';
+  const source = state.courseCapacitySource || (isLive ? '实时' : 'course.json 快照');
   const observedAt = state.courseCapacityObservedAt ? `；接口读取时间：${state.courseCapacityObservedAt}` : '';
   const sourceUpdatedAt = state.courseCapacitySourceUpdatedAt ? `；快照更新时间：${state.courseCapacitySourceUpdatedAt}` : '';
-  const freshness = state.courseCapacityStale ? '；状态：本地快照，非实时' : '';
+  const sourceIssue = !isLive && state.courseCapacitySourceError ? `；${state.courseCapacitySourceError}` : '';
+  const freshness = isLive
+    ? (state.courseCapacityStale ? '；状态：快照可能过期' : '；状态：实时')
+    : '；状态：本地快照，非实时';
   els.courseCapacitySummary.classList.remove('empty');
   els.courseCapacitySummary.innerHTML = `
-    <strong>容量与人数快照</strong>
+    <strong>容量与人数（${sourceLabel}）</strong>
     <div>容量 ${escapeHtml(countText(courseCapacity))}，教学班人数 ${escapeHtml(countText(enrolled))}，选课人数 ${escapeHtml(countText(selected))}，剩余 ${escapeHtml(countText(remaining))}。</div>
-    <div>来源：${escapeHtml(source)}${escapeHtml(sourceUpdatedAt)}${escapeHtml(observedAt)}${escapeHtml(freshness)}。未知字段不会被推算。</div>
+    <div>来源：${escapeHtml(source)}${escapeHtml(sourceUpdatedAt)}${escapeHtml(observedAt)}${escapeHtml(freshness)}${escapeHtml(sourceIssue)}。未知字段不会被推算。</div>
   `;
+  renderCourseCapacityControls();
+  renderCourseCapacityFailure();
 }
 
 function scheduleCard(item) {
@@ -700,7 +725,7 @@ function renderCourseIntel() {
   els.courseIntelBadge.className = 'badge ok-badge';
   const roundSummary = isKnown(state.courseCurrentRound) ? `当前第${state.courseCurrentRound}轮` : '当前轮次未知';
   const warningSummary = state.courseOptionsWarnings.length ? `；${state.courseOptionsWarnings.join('；')}` : '';
-  els.courseIntelSummary.textContent = `课程库 ${options.length} 门，${roundSummary}。${warningSummary}`;
+  els.courseIntelSummary.textContent = `课程库 ${options.length} 门（按可选教学班计），${roundSummary}。${warningSummary}`;
   els.courseOptionSelect.innerHTML = filtered.length
     ? filtered.map((item) => `<option value="${escapeHtml(item.displayCode)}">${escapeHtml(`${item.courseName} · ${item.displayCode}${item.teacher ? ` · ${item.teacher}` : ''}`)}</option>`).join('')
     : '<option value="">没有匹配课程</option>';
@@ -1256,6 +1281,78 @@ function renderConfigPreview() {
   `).join('');
 }
 
+async function loadCourseCapacity() {
+  let capacity = await fetchJSON('/api/course/live-capacity').catch(() => null);
+  if (!capacity?.ok) {
+    // Older backend without the live-capacity endpoint: fall back to the
+    // legacy course.json-only snapshot so the read-only path keeps working.
+    capacity = await fetchJSON('/api/course-capacity').catch(() => null);
+  }
+  if (capacity?.ok) {
+    state.courseCapacity = capacity.items || [];
+    state.courseCapacitySource = capacity.source || '';
+    state.courseCapacityObservedAt = capacity.observedAt || '';
+    state.courseCapacitySourceUpdatedAt = capacity.sourceUpdatedAt || '';
+    state.courseCapacityStale = capacity.stale === true;
+    state.courseCapacitySourceError = capacity.error || '';
+  } else {
+    state.courseCapacity = [];
+    state.courseCapacitySource = '';
+    state.courseCapacityObservedAt = '';
+    state.courseCapacitySourceUpdatedAt = '';
+    state.courseCapacityStale = false;
+    state.courseCapacitySourceError = String(capacity?.error || '读取容量数据失败');
+  }
+}
+
+function renderCourseCapacityControls() {
+  if (!els.capacityRefresh) return;
+  els.capacityRefresh.disabled = state.courseCapacityRefreshInFlight;
+  els.capacityRefresh.textContent = state.courseCapacityRefreshInFlight ? '刷新中…' : '刷新实时容量';
+}
+
+function renderCourseCapacityFailure() {
+  if (!els.courseCapacityError) return;
+  if (state.courseCapacityError) {
+    els.courseCapacityError.hidden = false;
+    const fallback = state.courseCapacitySource !== 'live' ? '已回退本地 course.json 快照。' : '已保留上次成功快照。';
+    els.courseCapacityError.textContent = `最近一次实时容量刷新失败（${formatTimestamp(state.courseCapacityRefreshFailedAt)}）：${state.courseCapacityError} ${fallback}`;
+  } else {
+    els.courseCapacityError.hidden = true;
+    els.courseCapacityError.textContent = '';
+  }
+}
+
+async function refreshCourseCapacity({ reason = 'manual' } = {}) {
+  if (state.courseCapacityRefreshInFlight) return;
+  state.courseCapacityRefreshInFlight = true;
+  renderCourseCapacityControls();
+  const attemptAt = new Date().toISOString();
+  try {
+    const result = await fetchJSON('/api/course/live-capacity/refresh', { method: 'POST' }).catch((error) => {
+      return { ok: false, error: String(error.message || error) };
+    });
+    if (result?.ok) {
+      state.courseCapacityError = '';
+      state.courseCapacityRefreshFailedAt = '';
+    } else {
+      state.courseCapacityError = String(result?.error || '刷新实时容量失败');
+      state.courseCapacityRefreshFailedAt = attemptAt;
+    }
+    await loadCourseCapacity();
+    renderCourseIntel();
+    if (reason === 'manual' && els.statusMessage) {
+      els.statusMessage.textContent = state.courseCapacityError
+        ? `实时容量刷新失败：${state.courseCapacityError}（${state.courseCapacitySource !== 'live' ? '已回退本地 course.json 快照' : '已保留上次成功快照'}）`
+        : '实时容量已刷新。';
+    }
+  } finally {
+    state.courseCapacityRefreshInFlight = false;
+    renderCourseCapacityControls();
+    renderCourseCapacityFailure();
+  }
+}
+
 function scheduleLiveRefresh() {
   clearLiveRefreshTimer();
   if (!state.autoRefresh) {
@@ -1455,20 +1552,7 @@ async function refreshStatus() {
     state.courseOptionsWarnings = options?.error ? [options.error] : [];
     state.courseCurrentRound = null;
   }
-  const capacity = await fetchJSON('/api/course-capacity').catch(() => null);
-  if (capacity?.ok) {
-    state.courseCapacity = capacity.items || [];
-    state.courseCapacitySource = capacity.source || '';
-    state.courseCapacityObservedAt = capacity.observedAt || '';
-    state.courseCapacitySourceUpdatedAt = capacity.sourceUpdatedAt || '';
-    state.courseCapacityStale = capacity.stale === true;
-  } else {
-    state.courseCapacity = [];
-    state.courseCapacitySource = '';
-    state.courseCapacityObservedAt = '';
-    state.courseCapacitySourceUpdatedAt = '';
-    state.courseCapacityStale = false;
-  }
+  await loadCourseCapacity();
   const classOptions = await fetchJSON('/api/class-options').catch(() => null);
   if (classOptions?.ok) {
     state.classOptions = classOptions.items || [];
@@ -1807,6 +1891,7 @@ async function parseExecutionLog() {
       els.statusMessage.textContent = '检测到选课或退课成功，正在刷新个人课表...';
       const refreshed = await refreshLiveSchedule({ reason: 'execution-success' });
       if (refreshed) state.lastExecutionRefreshKey = refreshKey;
+      refreshCourseCapacity({ reason: 'execution-success' });
     } else {
       if (refreshKey !== '[]') state.lastExecutionRefreshKey = refreshKey;
       els.statusMessage.textContent = `执行日志解析完成${suffix}。`;
@@ -1974,6 +2059,7 @@ function refreshAfterInlineExecution(log) {
   state.lastExecutionRefreshKey = key;
   els.statusMessage.textContent = '检测到选课或退课成功，正在刷新个人课表...';
   refreshLiveSchedule({ reason: 'execution-success' });
+  refreshCourseCapacity({ reason: 'execution-success' });
 }
 
 async function buildFallbackRecommendations() {
@@ -2031,6 +2117,7 @@ els.refresh.addEventListener('click', refreshStatus);
 els.refreshLive.addEventListener('click', () => refreshLiveSchedule({ reason: 'manual' }));
 els.autoRefresh.addEventListener('change', persistRefreshSettings);
 els.refreshInterval.addEventListener('change', persistRefreshSettings);
+els.capacityRefresh.addEventListener('click', () => refreshCourseCapacity({ reason: 'manual' }));
 els.courseOptionFilter.addEventListener('input', renderCourseIntel);
 els.courseOptionSelect.addEventListener('change', () => {
   state.courseInspectorCode = els.courseOptionSelect.value;

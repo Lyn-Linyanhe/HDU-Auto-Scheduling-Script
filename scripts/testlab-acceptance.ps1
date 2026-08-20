@@ -218,6 +218,32 @@ try {
     Remove-Item Env:HDU_TESTLAB_BASE -ErrorAction SilentlyContinue
   }
 
+  Write-Step "Checking Smart Agent live-capacity refresh (capacity-ok)..."
+  $capacityOkBase = Start-TestLabForScenario -Name "capacity-ok"
+  $env:HDU_TESTLAB_BASE = $capacityOkBase
+  $env:HDU_TESTLAB_SCENARIO = "capacity-ok"
+  try {
+    node scripts\smart-agent-live-capacity-check.js
+    if ($LASTEXITCODE -ne 0) { throw "Smart Agent live-capacity refresh (ok) check failed." }
+  } finally {
+    Stop-TestLab
+    Remove-Item Env:HDU_TESTLAB_BASE -ErrorAction SilentlyContinue
+    Remove-Item Env:HDU_TESTLAB_SCENARIO -ErrorAction SilentlyContinue
+  }
+
+  Write-Step "Checking Smart Agent live-capacity fallback (capacity-fail)..."
+  $capacityFailBase = Start-TestLabForScenario -Name "capacity-fail"
+  $env:HDU_TESTLAB_BASE = $capacityFailBase
+  $env:HDU_TESTLAB_SCENARIO = "capacity-fail"
+  try {
+    node scripts\smart-agent-live-capacity-check.js
+    if ($LASTEXITCODE -ne 0) { throw "Smart Agent live-capacity fallback (fail) check failed." }
+  } finally {
+    Stop-TestLab
+    Remove-Item Env:HDU_TESTLAB_BASE -ErrorAction SilentlyContinue
+    Remove-Item Env:HDU_TESTLAB_SCENARIO -ErrorAction SilentlyContinue
+  }
+
   Write-Step "Checking Smart Agent refresh contract..."
   node scripts\smart-agent-refresh-contract-test.js
   if ($LASTEXITCODE -ne 0) { throw "Smart Agent refresh contract failed." }

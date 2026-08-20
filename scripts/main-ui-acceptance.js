@@ -403,6 +403,10 @@ async function assertScheduler(cdp, withPersonal, scenarioDirectory) {
     hasLockedSearch: Boolean(document.querySelector('#locked-search')),
     hasLockedSearchResults: Boolean(document.querySelector('#locked-search-results')),
     hasLegacyWarning: Boolean(document.querySelector('#legacy-course-lock-warning')),
+    hasConfirm: Boolean(document.querySelector('#ux-confirm')),
+    confirmHidden: document.querySelector('#ux-confirm')?.hidden === true,
+    hasNotice: Boolean(document.querySelector('#scheduler-notice')),
+    noticeHidden: document.querySelector('#scheduler-notice')?.hidden === true,
     hasRemovedRequiredControls: !document.querySelector('#required-courses, #required-search, #required-search-results, #preferred-teachers'),
     lockControlOrder: (() => {
       const summary = document.querySelector('#locked-selected-picks');
@@ -415,7 +419,7 @@ async function assertScheduler(cdp, withPersonal, scenarioDirectory) {
     schemeMode: document.querySelector('#scheme-mode')?.value || '',
     periodText: [...document.querySelectorAll('#timetable .time-cell')].map((item) => item.textContent).join('|'),
   }))()`);
-  if (!result.smartAgentLink || !result.smartAgentLink.text.includes('HDU') || !result.smartAgentLink.text.includes('智能选课执行助手') || result.smartAgentLink.target !== '_blank' || !result.smartAgentLink.rel.includes('noopener') || !result.hasSearch || !result.hasClearBase || !result.hasExportCurrent || !result.hasTimetableScroll || result.timetableWidth < 748 || !result.hasLockedSummary || !result.hasLockedQuickPicks || !result.hasLockedSearch || !result.hasLockedSearchResults || !result.hasLegacyWarning || !result.hasRemovedRequiredControls || !result.lockControlOrder || result.minCreditStep !== '0.25' || result.maxCreditStep !== '0.25' || result.schemeMode !== 'teacher') {
+  if (!result.smartAgentLink || !result.smartAgentLink.text.includes('HDU') || !result.smartAgentLink.text.includes('智能选课执行助手') || result.smartAgentLink.target !== '_blank' || !result.smartAgentLink.rel.includes('noopener') || !result.hasSearch || !result.hasClearBase || !result.hasExportCurrent || !result.hasTimetableScroll || result.timetableWidth < 748 || !result.hasLockedSummary || !result.hasLockedQuickPicks || !result.hasLockedSearch || !result.hasLockedSearchResults || !result.hasLegacyWarning || !result.hasConfirm || !result.confirmHidden || !result.hasNotice || !result.noticeHidden || !result.hasRemovedRequiredControls || !result.lockControlOrder || result.minCreditStep !== '0.25' || result.maxCreditStep !== '0.25' || result.schemeMode !== 'teacher') {
     throw new Error(`Scheduler controls incomplete: ${JSON.stringify(result)}`);
   }
   if (!result.periodText.includes('18:30') || !result.periodText.includes('21:00')) throw new Error(`HDU period times missing: ${result.periodText}`);

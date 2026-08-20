@@ -88,6 +88,8 @@
         </div>
       </div>
 
+      <div id="scheduler-notice" class="scheduler-notice" hidden role="status" aria-live="polite"></div>
+
       <div class="constraint-sections">
         <section class="constraint-block">
           <h3>课程级约束</h3>
@@ -189,6 +191,19 @@
         <button class="primary-btn" id="modal-select-toggle" type="button">选课</button>
         <button class="ghost-btn" id="modal-lock-toggle" type="button">锁定</button>
         <button class="ghost-btn" data-modal-close type="button">关闭</button>
+      </div>
+    </section>
+  </div>
+
+  <div class="ux-confirm" id="ux-confirm" hidden role="dialog" aria-modal="true" aria-labelledby="ux-confirm-title">
+    <div class="ux-confirm-backdrop" data-ux-confirm-cancel></div>
+    <section class="ux-confirm-dialog">
+      <div class="eyebrow">生成候选</div>
+      <h2 id="ux-confirm-title">继续生成？</h2>
+      <p id="ux-confirm-message">候选课表数量过多，仍要继续生成吗？</p>
+      <div class="ux-confirm-actions">
+        <button class="ghost-btn" type="button" data-ux-confirm-cancel>取消</button>
+        <button class="primary-btn" id="ux-confirm-ok" type="button">继续生成</button>
       </div>
     </section>
   </div>

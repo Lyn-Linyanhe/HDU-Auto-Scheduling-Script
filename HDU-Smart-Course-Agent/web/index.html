@@ -124,9 +124,11 @@
             </select>
           </label>
           <button id="class-schedule-query" class="ghost-btn" type="button" disabled>查看班级课表</button>
+          <button id="capacity-refresh" class="ghost-btn" type="button" title="从教务余量接口拉取最新人数（受当前选课状态影响）">刷新实时容量</button>
         </div>
         <div id="course-intel-detail" class="course-intel-detail empty">课程数据加载后显示能力、轮次和人数。</div>
-        <div id="course-capacity-summary" class="readiness-summary empty">容量和人数来自当前 course.json 快照，缺失时保持未知。</div>
+        <div id="course-capacity-summary" class="readiness-summary empty">容量和人数来自 course.json 快照或教务实时快照，缺失时保持未知。</div>
+        <p id="course-capacity-error" class="course-warning" hidden></p>
         <div id="class-schedule-result" class="course-schedule-result empty">选择教学班后可查看同课程号的教学班课表。</div>
         <div id="admin-class-schedule-result" class="course-schedule-result empty">选择行政班后可查看该班全部课程。</div>
       </section>

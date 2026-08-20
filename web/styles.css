@@ -128,6 +128,7 @@ code { background: #f8fafc; padding: 0 0.35rem; border-radius: 4px; }
 .method-card p { color: var(--muted); margin: 0 0 12px; }
 
 .primary-btn, .ghost-btn {
+  min-height: 38px;
   border: 1px solid transparent;
   border-radius: 8px;
   padding: 10px 14px;
@@ -147,7 +148,7 @@ code { background: #f8fafc; padding: 0 0.35rem; border-radius: 4px; }
   background: #1d4ed8;
   box-shadow: inset 0 0 0 2px rgba(255, 255, 255, 0.45);
 }
-.small { padding: 8px 12px; }
+.small { min-height: 32px; padding: 8px 12px; }
 
 .dropzone {
   display: grid;
@@ -417,6 +418,7 @@ code { background: #f8fafc; padding: 0 0.35rem; border-radius: 4px; }
   display: grid;
   gap: 6px;
 }
+.group-more { margin-top: 8px; }
 .option-row .option {
   display: flex;
   justify-content: space-between;
@@ -1006,6 +1008,46 @@ code { background: #f8fafc; padding: 0 0.35rem; border-radius: 4px; }
   line-height: 1.5;
 }
 
+.scheduler-notice {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 10px;
+  margin: 10px 0 0;
+  border: 1px solid #fca5a5;
+  border-left: 3px solid var(--red);
+  background: #fef2f2;
+  color: #991b1b;
+  padding: 9px 10px;
+  font-size: 13px;
+  line-height: 1.5;
+}
+.scheduler-notice[hidden] { display: none; }
+.scheduler-notice .notice-actions { display: inline-flex; gap: 8px; margin-left: auto; }
+
+.ux-confirm {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+}
+.ux-confirm[hidden] { display: none; }
+.ux-confirm-backdrop { position: absolute; inset: 0; background: rgba(15, 23, 42, .42); }
+.ux-confirm-dialog {
+  position: relative;
+  width: min(460px, 100%);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  box-shadow: var(--shadow);
+  padding: 20px;
+}
+.ux-confirm-dialog h2 { margin: 6px 0 0; }
+.ux-confirm-dialog p { margin: 10px 0 16px; color: var(--muted); font-size: 13px; line-height: 1.6; }
+.ux-confirm-actions { display: flex; justify-content: flex-end; gap: 8px; }
+
 @media (max-width: 1100px) {
   .bootstrap-layout, .scheduler-layout { grid-template-columns: 1fr; }
   .control-panel { grid-column: auto; }
@@ -1015,8 +1057,32 @@ code { background: #f8fafc; padding: 0 0.35rem; border-radius: 4px; }
 
 @media (max-width: 760px) {
   .topbar { flex-direction: column; }
+  .primary-btn, .ghost-btn, .danger-btn { min-height: 44px; }
+  .small { min-height: 40px; }
+  .topbar-actions .primary-btn, .topbar-actions .ghost-btn { min-width: 44px; }
   .login-grid, .compact-grid, .control-grid { grid-template-columns: 1fr; }
   .timetable { font-size: 12px; min-width: 748px; }
   .time-cell { min-width: 72px; }
   .course-list, .selected-list, .result-list { max-height: none; }
+}
+
+
+@media (min-width: 761px) {
+  .topbar-actions .primary-btn, .topbar-actions .ghost-btn, .topbar-actions .danger-btn { white-space: nowrap; }
+  .scheme-custom-form { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1fr) auto; }
+}
+
+@media (max-width: 760px) {
+  .scheme-custom-form { grid-template-columns: 1fr; }
+  .candidate-toolbar {
+    position: sticky;
+    bottom: 0;
+    z-index: 20;
+    background: #ffffff;
+    margin-left: -1px;
+    margin-right: -1px;
+    padding: 8px 2px;
+    border-top: 1px solid var(--line);
+    box-shadow: 0 -2px 10px rgba(15, 23, 42, 0.10);
+  }
 }

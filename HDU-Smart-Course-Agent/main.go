@@ -41,7 +41,12 @@ const (
 	defaultRefreshIntervalSeconds = 60
 	minRefreshIntervalSeconds     = 10
 	maxRefreshIntervalSeconds     = 7200
+	maxLiveCapacityAge            = 30 * time.Minute
 )
+
+// capacityRefreshMu serializes live-capacity refreshes so concurrent
+// clients cannot open competing login sessions against the teaching system.
+var capacityRefreshMu sync.Mutex
 
 type CoursePayload struct {
 	SchemaVersion int              `json:"schemaVersion,omitempty"`
@@ -242,6 +247,55 @@ type LiveCapacityCaptureResponse struct {
 	RowSchema  []CaptureRowField `json:"rowSchema,omitempty"`
 	Preview    string            `json:"preview,omitempty"`
 	Error      string            `json:"error,omitempty"`
+}
+
+// LiveCapacityItem is the canonical (schema-first) record contract for a live
+// capacity snapshot. The mapping layer (mapCapacityRow) is the single place that
+// translates school-specific row fields into this shape; when a real capture
+// reveals new key names, only the candidate tables there need updating.
+type LiveCapacityItem struct {
+	DisplayCode string `json:"displayCode"`
+	CourseName  string `json:"courseName"`
+	Capacity    *int   `json:"capacity"`
+	Enrolled    *int   `json:"enrolled"`
+	Selected    *int   `json:"selected"`
+	Remaining   *int   `json:"remaining"`
+	Source      string `json:"source"`
+	ObservedAt  string `json:"observedAt"`
+}
+
+// LiveCapacitySnapshot is the on-disk envelope for canonical live capacity data.
+// It is only rewritten on a successful refresh, so a failed refresh preserves the
+// previous good snapshot (same keep-last-good semantics as the personal schedule).
+type LiveCapacitySnapshot struct {
+	SchemaVersion int                `json:"schemaVersion"`
+	CapturedAt    string             `json:"capturedAt"`
+	Term          string             `json:"term,omitempty"`
+	Source        string             `json:"source"`
+	Warnings      []string           `json:"warnings,omitempty"`
+	Items         []LiveCapacityItem `json:"items"`
+}
+
+// LiveCapacityRefreshRequest mirrors LiveCapacityCaptureRequest so the front end
+// can override the term or restrict the query to a single filter.
+type LiveCapacityRefreshRequest struct {
+	XueNian    string `json:"xueNian,omitempty"`
+	XueQi      string `json:"xueQi,omitempty"`
+	FilterList string `json:"filterList,omitempty"`
+}
+
+// LiveCapacityRefreshResponse reports what a refresh query produced and where the
+// canonical snapshot was written; OK=false keeps the previous snapshot intact.
+type LiveCapacityRefreshResponse struct {
+	OK         bool     `json:"ok"`
+	CapturedAt string   `json:"capturedAt,omitempty"`
+	Term       string   `json:"term,omitempty"`
+	Path       string   `json:"path,omitempty"`
+	QueryCount int      `json:"queryCount,omitempty"`
+	Rows       int      `json:"rows,omitempty"`
+	Count      int      `json:"count,omitempty"`
+	Warnings   []string `json:"warnings,omitempty"`
+	Error      string   `json:"error,omitempty"`
 }
 
 type Risk struct {
@@ -629,6 +683,7 @@ type paths struct {
 	personalPath     string
 	livePersonalPath string
 	liveSyncPath     string
+	liveCapacityPath string
 	killConfigPath   string
 	actionPlanPath   string
 	approvalPath     string
@@ -723,6 +778,8 @@ func main() {
 	mux.HandleFunc("/api/class-options", handleClassOptions)
 	mux.HandleFunc("/api/course-capacity", handleCourseCapacity)
 	mux.HandleFunc("/api/course/live-capacity/capture", handleLiveCapacityCapture)
+	mux.HandleFunc("/api/course/live-capacity", handleLiveCapacity)
+	mux.HandleFunc("/api/course/live-capacity/refresh", handleLiveCapacityRefresh)
 	mux.HandleFunc("/api/plan", handlePlan)
 	mux.HandleFunc("/api/execution/dry-run", handleExecutionDryRun)
 	mux.HandleFunc("/api/execution/authorize", handleExecutionAuthorize)
@@ -1237,12 +1294,18 @@ func handleCourseCapacity(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	p := discoverPaths()
+	writeJSON(w, buildCourseCapacityResponse(p, r.URL.Query().Get("groupId"), r.URL.Query().Get("displayCode")))
+}
+
+// buildCourseCapacityResponse reads the local course.json snapshot and is the
+// shared fallback path for both /api/course-capacity and the live-capacity read
+// endpoint (when no usable live snapshot exists).
+func buildCourseCapacityResponse(p paths, groupID, displayCode string) CourseCapacityResponse {
 	courses, payload, err := loadCourses(p.coursePath)
 	if err != nil {
-		writeJSON(w, CourseCapacityResponse{OK: false, SchemaVersion: schemaVersion, ObservedAt: time.Now().Format(time.RFC3339), Source: "course.json", Stale: true, Error: err.Error()})
-		return
+		return CourseCapacityResponse{OK: false, SchemaVersion: schemaVersion, ObservedAt: time.Now().Format(time.RFC3339), Source: "course.json", Stale: true, Error: err.Error()}
 	}
-	filtered := filterCourseLibrary(courses, strings.TrimSpace(r.URL.Query().Get("groupId")), strings.TrimSpace(r.URL.Query().Get("displayCode")))
+	filtered := filterCourseLibrary(courses, strings.TrimSpace(groupID), strings.TrimSpace(displayCode))
 	items := make([]CourseCapacityItem, 0, len(filtered))
 	for _, course := range sortCourses(filtered) {
 		items = append(items, capacityItem(course))
@@ -1251,7 +1314,7 @@ func handleCourseCapacity(w http.ResponseWriter, r *http.Request) {
 	if len(items) == 0 {
 		warnings = append(warnings, "没有匹配到教学班；容量和选课人数只来自当前 course.json 快照。")
 	}
-	writeJSON(w, CourseCapacityResponse{
+	return CourseCapacityResponse{
 		OK:              true,
 		SchemaVersion:   schemaVersion,
 		Term:            inferTerm(payload.Term, courses),
@@ -1261,7 +1324,7 @@ func handleCourseCapacity(w http.ResponseWriter, r *http.Request) {
 		Stale:           true,
 		Items:           items,
 		Warnings:        warnings,
-	})
+	}
 }
 
 func courseSourceUpdatedAt(coursePath string, payload CoursePayload) string {
@@ -1454,15 +1517,9 @@ func handleLiveCapacityCapture(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Acceptance-only hook: point the vendored client at a loopback mock so the
-	// capture flow can be exercised without touching the real teaching system.
-	if base := strings.TrimSpace(os.Getenv("HDU_KILLCOURSE_BASE_URL")); base != "" {
-		if !isLoopbackBaseURL(base) {
-			fail("HDU_KILLCOURSE_BASE_URL 必须是本机回环地址")
-			return
-		}
-		kcclient.BaseJWURL = strings.TrimRight(base, "/")
-		kcclient.BaseSSOURL = strings.TrimRight(base, "/")
+	if err := applyKillCourseLoopbackBaseURL(); err != nil {
+		fail(err.Error())
+		return
 	}
 
 	ex, err := agentexecutor.New(kcCfg, p.coursePath)
@@ -1504,6 +1561,414 @@ func handleLiveCapacityCapture(w http.ResponseWriter, r *http.Request) {
 		RowSchema:  rowSchema,
 		Preview:    truncateUTF8(string(rawBody), 1200),
 	})
+}
+
+func handleLiveCapacity(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	p := discoverPaths()
+	writeJSON(w, courseCapacityFromLiveOrSnapshot(p, r.URL.Query().Get("groupId"), r.URL.Query().Get("displayCode")))
+}
+
+func handleLiveCapacityRefresh(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBytes)
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	var req LiveCapacityRefreshRequest
+	if err := json.Unmarshal(body, &req); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	capacityRefreshMu.Lock()
+	defer capacityRefreshMu.Unlock()
+
+	p := discoverPaths()
+	fail := func(message string) {
+		writeJSON(w, LiveCapacityRefreshResponse{OK: false, Error: message})
+	}
+	if !fileExists(p.killConfigPath) {
+		fail("未找到 KillCourse/config.json，请先在设置中完成登录并写入配置，再刷新实时容量。")
+		return
+	}
+	if !fileExists(p.coursePath) {
+		fail("未找到课程库文件 course.json，请先在主站完成课程导出。")
+		return
+	}
+	cfgData, err := os.ReadFile(p.killConfigPath)
+	if err != nil {
+		fail("读取 KillCourse/config.json 失败: " + err.Error())
+		return
+	}
+	var cfg KillCourseConfig
+	if err := json.Unmarshal(cfgData, &cfg); err != nil {
+		fail("解析 KillCourse/config.json 失败: " + err.Error())
+		return
+	}
+	kcCfg, err := killCourseConfigToUpstream(cfg)
+	if err != nil {
+		fail(err.Error())
+		return
+	}
+	xueNian := strings.TrimSpace(req.XueNian)
+	if xueNian == "" {
+		xueNian = cfg.Time.XueNian
+	}
+	xueQi := strings.TrimSpace(req.XueQi)
+	if xueQi == "" {
+		xueQi = cfg.Time.XueQi
+	}
+	xqm, err := captureTermXqm(xueQi)
+	if err != nil {
+		fail(err.Error())
+		return
+	}
+	if err := applyKillCourseLoopbackBaseURL(); err != nil {
+		fail(err.Error())
+		return
+	}
+	ex, err := agentexecutor.New(kcCfg, p.coursePath)
+	if err != nil {
+		fail("实时容量刷新前登录/加载失败: " + err.Error())
+		return
+	}
+	capturedAt := time.Now().Format(time.RFC3339)
+	rows := make([]map[string]any, 0, 32)
+	seen := map[string]bool{}
+	queryCount := 0
+	for _, filter := range liveCapacityFilters(req.FilterList, cfg.Course) {
+		if seen[filter] {
+			continue
+		}
+		seen[filter] = true
+		queryCount++
+		rawBody, qErr := ex.SearchCourseRaw(xueNian, xqm, filter)
+		if qErr != nil {
+			fail("查询余量接口失败: " + qErr.Error())
+			return
+		}
+		rows = append(rows, extractCapacityRows(rawBody)...)
+	}
+	if len(rows) == 0 {
+		fail("接口未返回有效余量数据（可能当前不在选课期或查询无结果）。")
+		return
+	}
+	items := mapCapacityRows(rows, capturedAt)
+	warnings := []string{"实时容量数据来自教务余量接口；字段由映射层按候选键探测，真实字段以抓包诊断为准。"}
+	if code := strings.TrimSpace(req.FilterList); code != "" {
+		warnings = append(warnings, "本次刷新仅查询了: "+code)
+	}
+	snapshot := LiveCapacitySnapshot{
+		SchemaVersion: schemaVersion,
+		CapturedAt:    capturedAt,
+		Term:          xueNian + "-" + xueQi,
+		Source:        "live",
+		Warnings:      warnings,
+		Items:         items,
+	}
+	if err := writeJSONFile(p.liveCapacityPath, snapshot); err != nil {
+		fail("写入实时容量快照失败: " + err.Error())
+		return
+	}
+	writeJSON(w, LiveCapacityRefreshResponse{
+		OK:         true,
+		CapturedAt: capturedAt,
+		Term:       snapshot.Term,
+		Path:       p.liveCapacityPath,
+		QueryCount: queryCount,
+		Rows:       len(rows),
+		Count:      len(items),
+		Warnings:   warnings,
+	})
+}
+
+// liveCapacityFilters returns the ordered, deduplicated filter values a refresh
+// should query. A caller-provided filter wins; otherwise each configured course
+// action in KillCourse/config.json is queried so every plan course gets a live
+// capacity row. With nothing configured it falls back to a single empty-filter
+// query (the first page of the availability search).
+func liveCapacityFilters(callerFilter string, courseActions map[string]string) []string {
+	if strings.TrimSpace(callerFilter) != "" {
+		return []string{strings.TrimSpace(callerFilter)}
+	}
+	var filters []string
+	seen := map[string]bool{}
+	for code := range courseActions {
+		code = strings.TrimSpace(code)
+		if code == "" || seen[code] {
+			continue
+		}
+		seen[code] = true
+		filters = append(filters, code)
+	}
+	sort.Strings(filters)
+	if len(filters) == 0 {
+		filters = append(filters, "")
+	}
+	if len(filters) > 60 {
+		filters = filters[:60]
+	}
+	return filters
+}
+
+// courseCapacityFromLiveOrSnapshot is the read path behind GET
+// /api/course/live-capacity. A usable live snapshot wins; otherwise it falls back
+// to the ordinary course.json capacity snapshot (source=course.json, stale=true)
+// and explains why in warnings/error, mirroring the personal-schedule refresh.
+func courseCapacityFromLiveOrSnapshot(p paths, groupID, displayCode string) CourseCapacityResponse {
+	fallback := buildCourseCapacityResponse(p, groupID, displayCode)
+	snapshot, err := loadLiveCapacitySnapshot(p.liveCapacityPath)
+	if err != nil || len(snapshot.Items) == 0 {
+		if err == nil {
+			err = errors.New("暂无实时容量快照，请先在“课程数据与教学班”区域点击“刷新实时容量”")
+		}
+		fallback.Warnings = append(fallback.Warnings, "实时容量不可用，已回退本地 course.json 快照："+err.Error())
+		if fallback.Error == "" {
+			fallback.Error = err.Error()
+		}
+		return fallback
+	}
+	return liveCapacityResponse(p, snapshot, groupID, displayCode)
+}
+
+func liveCapacityResponse(p paths, snapshot LiveCapacitySnapshot, groupID, displayCode string) CourseCapacityResponse {
+	courses, _, _ := loadCourses(p.coursePath)
+	items := make([]CourseCapacityItem, 0, len(snapshot.Items))
+	for _, item := range snapshot.Items {
+		if displayCode != "" && normalizeCode(item.DisplayCode) != normalizeCode(displayCode) {
+			continue
+		}
+		if groupID != "" && !liveItemMatchesGroup(item, courses, groupID) {
+			continue
+		}
+		items = append(items, liveCapacityResponseItem(item))
+	}
+	sort.Slice(items, func(i, j int) bool { return items[i].DisplayCode < items[j].DisplayCode })
+	warnings := append([]string(nil), snapshot.Warnings...)
+	stale := false
+	if elapsed := timeSinceRFC3339(snapshot.CapturedAt); elapsed > maxLiveCapacityAge {
+		stale = true
+		warnings = append(warnings, fmt.Sprintf("实时容量快照已超过 %s 未刷新，数值可能并非最新；可点击“刷新实时容量”。", (maxLiveCapacityAge / time.Minute).String()+"分钟"))
+	}
+	return CourseCapacityResponse{
+		OK:              true,
+		SchemaVersion:   schemaVersion,
+		Term:            snapshot.Term,
+		ObservedAt:      snapshot.CapturedAt,
+		SourceUpdatedAt: snapshot.CapturedAt,
+		Source:          "live",
+		Stale:           stale,
+		Items:           items,
+		Warnings:        warnings,
+	}
+}
+
+func liveItemMatchesGroup(item LiveCapacityItem, courses []Course, groupID string) bool {
+	for _, course := range courses {
+		if normalizeCode(course.DisplayCode) == normalizeCode(item.DisplayCode) && courseMatchesGroup(course, groupID) {
+			return true
+		}
+	}
+	return false
+}
+
+func liveCapacityResponseItem(item LiveCapacityItem) CourseCapacityItem {
+	remaining := item.Remaining
+	if remaining == nil && item.Capacity != nil && item.Selected != nil {
+		value := *item.Capacity - *item.Selected
+		if value < 0 {
+			value = 0
+		}
+		remaining = &value
+	}
+	var full *bool
+	if remaining != nil {
+		isFull := *remaining == 0
+		full = &isFull
+	}
+	return CourseCapacityItem{
+		DisplayCode: item.DisplayCode,
+		CourseName:  item.CourseName,
+		Capacity:    item.Capacity,
+		Enrolled:    item.Enrolled,
+		Selected:    item.Selected,
+		Remaining:   remaining,
+		Full:        full,
+	}
+}
+
+func loadLiveCapacitySnapshot(file string) (LiveCapacitySnapshot, error) {
+	var snapshot LiveCapacitySnapshot
+	data, err := os.ReadFile(file)
+	if err != nil {
+		return snapshot, err
+	}
+	if err := json.Unmarshal(data, &snapshot); err != nil {
+		return snapshot, err
+	}
+	return snapshot, nil
+}
+
+func timeSinceRFC3339(value string) time.Duration {
+	parsed, err := time.Parse(time.RFC3339, value)
+	if err != nil {
+		return 0
+	}
+	return time.Since(parsed)
+}
+
+// mapCapacityRow is the single assumption point of the schema-first design: it
+// translates one school-specific row into the canonical LiveCapacityItem by
+// probing candidate key names in order. Common ZhengFang availability fields are
+// listed first (rl=容量, skrs=授课人数, xkrs=选课人数, syl=余量); if a real capture
+// later reveals different names, only this candidate table needs updating.
+func mapCapacityRow(raw map[string]any, observedAt string) LiveCapacityItem {
+	item := LiveCapacityItem{
+		DisplayCode: firstNonEmpty(firstText(raw["jxbmc"]), firstText(raw["displayCode"]), firstText(raw["jxb_id"])),
+		CourseName:  firstNonEmpty(firstText(raw["kcmc"]), firstText(raw["courseName"]), firstText(raw["name"]), "未命名课程"),
+		Capacity: optionalInt(raw,
+			"rl", "jxbrl", "zrs", "容量", "totalCapacity"),
+		Enrolled: optionalInt(raw,
+			"skrs", "jxbrs", "ssrs", "授课人数", "enrolled"),
+		Selected: optionalInt(raw,
+			"xkrs", "yxrs", "ykrs", "selected", "选课人数"),
+		Remaining: optionalInt(raw,
+			"syl", "syrs", "syrl", "remaining", "余量", "剩余人数"),
+		Source:     "live",
+		ObservedAt: observedAt,
+	}
+	if item.Remaining == nil && item.Capacity != nil && item.Selected != nil {
+		value := *item.Capacity - *item.Selected
+		if value < 0 {
+			value = 0
+		}
+		item.Remaining = &value
+	}
+	return item
+}
+
+// mapCapacityRows maps captured rows into canonical items, merging rows that
+// share a display code so a later, more complete row can fill gaps.
+func mapCapacityRows(rows []map[string]any, observedAt string) []LiveCapacityItem {
+	merged := make(map[string]LiveCapacityItem)
+	order := make([]string, 0, len(rows))
+	for _, row := range rows {
+		item := mapCapacityRow(row, observedAt)
+		key := normalizeCode(item.DisplayCode)
+		if key == "" {
+			key = item.CourseName
+		}
+		if key == "" {
+			continue
+		}
+		existing, ok := merged[key]
+		if !ok {
+			merged[key] = item
+			order = append(order, key)
+			continue
+		}
+		merged[key] = mergeLiveCapacityItems(existing, item)
+	}
+	items := make([]LiveCapacityItem, 0, len(order))
+	for _, key := range order {
+		items = append(items, merged[key])
+	}
+	return items
+}
+
+func mergeLiveCapacityItems(base, extra LiveCapacityItem) LiveCapacityItem {
+	if base.DisplayCode == "" {
+		base.DisplayCode = extra.DisplayCode
+	}
+	if base.CourseName == "" || base.CourseName == "未命名课程" {
+		base.CourseName = extra.CourseName
+	}
+	if base.Capacity == nil {
+		base.Capacity = extra.Capacity
+	}
+	if base.Enrolled == nil {
+		base.Enrolled = extra.Enrolled
+	}
+	if base.Selected == nil {
+		base.Selected = extra.Selected
+	}
+	if base.Remaining == nil {
+		base.Remaining = extra.Remaining
+	}
+	return base
+}
+
+// extractCapacityRows finds the teaching-section rows in a captured availability
+// response: it prefers the top-level tmpList array, then any array of objects.
+func extractCapacityRows(body []byte) []map[string]any {
+	var value any
+	if err := json.Unmarshal(body, &value); err != nil {
+		return nil
+	}
+	if root, ok := value.(map[string]any); ok {
+		if rows := objectArray(root["tmpList"]); len(rows) > 0 {
+			return rows
+		}
+	}
+	return firstObjectArray(value)
+}
+
+func objectArray(value any) []map[string]any {
+	arr, ok := value.([]any)
+	if !ok {
+		return nil
+	}
+	rows := make([]map[string]any, 0, len(arr))
+	for _, entry := range arr {
+		if row, ok := entry.(map[string]any); ok {
+			rows = append(rows, row)
+		}
+	}
+	return rows
+}
+
+func firstObjectArray(value any) []map[string]any {
+	if rows := objectArray(value); len(rows) > 0 {
+		return rows
+	}
+	switch typed := value.(type) {
+	case map[string]any:
+		for _, nested := range typed {
+			if rows := firstObjectArray(nested); len(rows) > 0 {
+				return rows
+			}
+		}
+	case []any:
+		for _, nested := range typed {
+			if rows := firstObjectArray(nested); len(rows) > 0 {
+				return rows
+			}
+		}
+	}
+	return nil
+}
+
+// applyKillCourseLoopbackBaseURL points the vendored KillCourse client at a mock
+// for acceptance tests. It refuses non-loopback targets so tests stay local.
+func applyKillCourseLoopbackBaseURL() error {
+	base := strings.TrimSpace(os.Getenv("HDU_KILLCOURSE_BASE_URL"))
+	if base == "" {
+		return nil
+	}
+	if !isLoopbackBaseURL(base) {
+		return errors.New("HDU_KILLCOURSE_BASE_URL 必须是本机回环地址")
+	}
+	kcclient.BaseJWURL = strings.TrimRight(base, "/")
+	kcclient.BaseSSOURL = strings.TrimRight(base, "/")
+	return nil
 }
 
 func captureTermXqm(xueQi string) (string, error) {
@@ -4130,6 +4595,7 @@ func discoverPaths() paths {
 		personalPath:     filepath.Join(schedulerDir, "personal-schedule.json"),
 		livePersonalPath: filepath.Join(schedulerDir, "personal-schedule-live.json"),
 		liveSyncPath:     filepath.Join(workspace, "live-schedule-sync.json"),
+		liveCapacityPath: filepath.Join(workspace, "live-capacity.json"),
 		killConfigPath:   filepath.Join(killDir, "config.json"),
 		actionPlanPath:   filepath.Join(workspace, "action-plan.json"),
 		approvalPath:     filepath.Join(workspace, "execution-approval.json"),

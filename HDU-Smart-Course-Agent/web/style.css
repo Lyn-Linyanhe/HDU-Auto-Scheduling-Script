@@ -41,6 +41,7 @@ h4 { margin-bottom: 5px; font-size: 14px; }
   padding: 20px 24px 12px;
 }
 .eyebrow { color: var(--blue); font-size: 12px; font-weight: 800; }
+.topbar .badge { display: inline-flex; align-items: center; min-height: 36px; }
 .top-actions { justify-content: flex-end; }
 .actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .primary-btn, .ghost-btn {
@@ -50,6 +51,7 @@ h4 { margin-bottom: 5px; font-size: 14px; }
   padding: 7px 11px;
   font-weight: 800;
   cursor: pointer;
+  white-space: nowrap;
 }
 .primary-btn { border-color: var(--blue); background: var(--blue); color: #fff; }
 .ghost-btn { background: var(--surface); color: var(--text); }
@@ -124,6 +126,8 @@ h4 { margin-bottom: 5px; font-size: 14px; }
 .stage-kicker { display: block; margin-bottom: 4px; color: var(--blue); font-size: 12px; font-weight: 800; }
 
 .status-grid, .summary-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+.status-grid { grid-template-columns: repeat(auto-fit, minmax(172px, 1fr)); }
+
 .compact-status { margin: 16px 0; }
 .stat-card { min-height: 74px; border-left: 3px solid var(--line); padding: 10px 12px; background: var(--surface); }
 .stat-card span { display: block; margin-bottom: 5px; color: var(--muted); font-size: 12px; }
@@ -173,6 +177,7 @@ h4 { margin-bottom: 5px; font-size: 14px; }
 .sync-toggle { min-height: 40px; border: 1px solid var(--line); border-radius: 6px; padding: 7px 10px; background: var(--surface); }
 .interval-control { display: inline-grid; grid-template-columns: auto 72px auto; align-items: center; gap: 6px; min-height: 40px; color: var(--muted); font-size: 13px; font-weight: 700; }
 .interval-control input { width: 72px; min-height: 40px; border: 1px solid var(--line); border-radius: 6px; padding: 7px 9px; color: var(--text); background: var(--surface); }
+.sync-control-actions .primary-btn, .sync-control-actions .ghost-btn { min-height: 40px; }
 .sync-status-grid, .schedule-meta { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
 .schedule-meta { grid-template-columns: repeat(2, minmax(0, 1fr)); margin: 12px 0; }
 .sync-status-grid > div, .schedule-meta > div { min-width: 0; border-left: 3px solid var(--blue-soft); padding: 7px 9px; background: #fbfcfe; }
@@ -190,6 +195,7 @@ h4 { margin-bottom: 5px; font-size: 14px; }
 .course-intel-controls label { display: grid; min-width: 0; gap: 6px; color: var(--muted); font-size: 12px; font-weight: 800; }
 .course-intel-controls input, .course-intel-controls select { width: 100%; min-width: 0; min-height: 40px; border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; color: var(--text); background: var(--surface); font-size: 13px; }
 .course-intel-controls .ghost-btn { min-height: 40px; }
+.course-intel-controls button { white-space: nowrap; }
 .course-intel-detail { margin-top: 12px; }
 .course-detail-card { border-left: 3px solid var(--blue); padding: 12px; background: var(--surface); }
 .course-detail-head { display: flex; align-items: start; justify-content: space-between; gap: 12px; }
@@ -257,6 +263,8 @@ h4 { margin-bottom: 5px; font-size: 14px; }
   .data-grid, .plan-columns, .details-grid, .details-grid.two { grid-template-columns: 1fr; }
   .course-intel-controls, .course-facts { grid-template-columns: 1fr; }
   .primary-btn, .ghost-btn { min-height: 44px; }
+  .top-actions .primary-btn, .top-actions .ghost-btn { min-width: 48px; }
+  .sync-toggle, .interval-control, .interval-control input, .course-intel-controls input, .course-intel-controls select, .course-intel-controls .ghost-btn { min-height: 44px; }
   .sync-status-grid, .schedule-meta { grid-template-columns: 1fr; }
   .course-detail-head { flex-wrap: wrap; }
   .course-detail-head > div { min-width: 0; }

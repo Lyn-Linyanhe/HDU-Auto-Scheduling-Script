@@ -102,7 +102,34 @@
   `className=202601` 2 门 / `202602` 1 门），已接入 `testlab-acceptance.ps1`；桌面与
   390px 移动 UI smoke 均通过、无横向溢出。
 
-## 方案 B：通用字段先行（等待用户授权后开工）
+## 方案 B：通用字段先行（状态：已实现，2026-08-21；真实抓包收尾仅剩映射层微调）
+
+> 用户已授权启动方案 B，本方案全部落地并通过 testlab 全量验收（含 capacity-ok/fail
+> 场景与 Go 单测）。实现要点见“实施记录”一节；真实选课期抓包后，若候选键未命中，
+> 只需更新 `mapCapacityRow` 的候选键表（`main.go`）一处并复跑测试。
+
+### 方案 B 实施记录（2026-08-21）
+
+- 规范契约：`live-capacity.json` 记录字段 `{ displayCode, courseName, capacity,
+  enrolled, selected, remaining, source, observedAt }`；文件只在成功刷新时重写，
+  失败保留上一次成功快照。
+- 映射层：`mapCapacityRow(raw, observedAt)` 为唯一假设点，按候选键探测
+  `rl/jxbrl/…`=容量、`skrs/jxbrs/…`=授课人数、`xkrs/yxrs/…`=选课人数、
+  `syl/syrl/…`=余量；无显式余量时用 容量-选课人数 推算。单测覆盖 5 种候选形状。
+- API：`POST /api/course/live-capacity/refresh`（复用登录会话逐课查询余量接口、
+  映射并写快照）+ `GET /api/course/live-capacity`（读快照；无/空快照回退
+  `course.json`，标记 source=course.json/stale=true 并在 warnings/error 说明原因；
+  快照超过 30 分钟标记 stale）。`/api/course-capacity` 重构复用同一 fallback 构建器。
+- 前端：课程情报区新增“刷新实时容量”按钮；容量卡片支持 实时/快照 双来源标识、
+  接口读取时间、快照更新时间、来源失败原因；刷新失败保留上次成功快照并显示
+  “最近一次实时容量刷新失败…已保留上次成功快照”；选/退课执行成功后也会自动刷新。
+- testlab/验收：`killcourse.course.sample.json` 补容量字段；`handlePartDisplay` 在
+  capacity-fail 场景返回“当前不属于选课阶段”，否则透传容量字段；
+  `smart-agent-live-capacity-check.js` 断言两类场景；已接入 `testlab-acceptance.ps1`。
+- 待选课期收尾：真实会话点击“刷新实时容量”→ 若候选键未命中，更新
+  `mapCapacityRow` 候选表并复跑 Go 单测（`TestMapCapacityRowDetectsCandidateShapes`）。
+
+
 
 目标：不依赖真实抓包，先把 P2 的“实时人数/余量”展示能力按**规范化契约**搭好，
 把“学校真实字段未知”这件事收敛到一层很小的映射表，真实抓包后只改映射。
