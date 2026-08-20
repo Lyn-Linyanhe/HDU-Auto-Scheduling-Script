@@ -325,6 +325,38 @@ func (e *Executor) relogin() error {
 	return nil
 }
 
+// SearchCourseRaw performs a capacity/availability query against the teaching
+// system and returns the raw response body. It is used by the Smart Agent
+// capture-diagnosis flow to record the real interface shape for the live
+// capacity feature (P2), without assuming the set of fields upfront.
+func (e *Executor) SearchCourseRaw(xnm, xqm, filterList string) ([]byte, error) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	req := kcclient.SearchCourseReq{
+		Xkxnm:      xnm,
+		Xkxqm:      xqm,
+		Kklxdm:     "01",
+		Jspage:     "10",
+		Kspage:     "1",
+		Yllist:     "1",
+		Filterlist: filterList,
+		NjdmIDXs:   e.client.NjdmIDXs,
+		ZyhIDXs:    e.client.ZyhIDXs,
+	}
+	body, _, err := e.client.Post(
+		kcclient.BaseJWURL+"/xsxk/zzxkyzb_cxZzxkYzbPartDisplay.html?gnmkdm=N253512",
+		req.ToFormData().Encode(),
+		nil,
+	)
+	if err != nil {
+		return nil, err
+	}
+	if strings.Contains(string(body), "统一身份认证") {
+		return nil, errors.New("可能登录过期")
+	}
+	return body, nil
+}
+
 func (e *Executor) ensureClientBodyConfig() error {
 	if e.client.ClientBodyConfig != nil {
 		return nil

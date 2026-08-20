@@ -62,6 +62,7 @@
 /.gocache/
 /.worktrees/
 /tmp-testlab-acceptance/
+/tmp-manual-check/
 
 # Local environment and OS files
 .env

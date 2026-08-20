@@ -206,6 +206,18 @@ try {
   node scripts\smart-agent-class-schedule-check.js
   if ($LASTEXITCODE -ne 0) { throw "Smart Agent class schedule check failed." }
 
+  Write-Step "Checking Smart Agent live-capacity capture against mock..."
+  $captureBase = Start-TestLabForScenario -Name "killcourse"
+  $env:HDU_TESTLAB_BASE = $captureBase
+  $env:HDU_SMART_AGENT_EXE = $smartAgentExe
+  try {
+    node scripts\smart-agent-live-capacity-capture-check.js
+    if ($LASTEXITCODE -ne 0) { throw "Smart Agent live-capacity capture check failed." }
+  } finally {
+    Stop-TestLab
+    Remove-Item Env:HDU_TESTLAB_BASE -ErrorAction SilentlyContinue
+  }
+
   Write-Step "Checking Smart Agent refresh contract..."
   node scripts\smart-agent-refresh-contract-test.js
   if ($LASTEXITCODE -ne 0) { throw "Smart Agent refresh contract failed." }

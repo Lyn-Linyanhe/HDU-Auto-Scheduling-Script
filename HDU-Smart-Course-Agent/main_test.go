@@ -3,6 +3,9 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"crypto/rsa"
+	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -14,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	kcclient "github.com/cr4n5/HDU-KillCourse/client"
 	kcconfig "github.com/cr4n5/HDU-KillCourse/config"
 	agentexecutor "hdu-smart-course-agent/executor"
 )
@@ -2421,4 +2425,129 @@ func TestHandleExecutionStatusShowsInFlightEvents(t *testing.T) {
 	if resp.Log.Summary.Pending != 1 {
 		t.Fatalf("expected 1 pending in-flight item, got %+v", resp.Log.Summary)
 	}
+}
+
+func newCaptureMockServer(t *testing.T) *httptest.Server {
+	t.Helper()
+	key, err := rsa.GenerateKey(rand.Reader, 1024)
+	if err != nil {
+		t.Fatal(err)
+	}
+	modulus := base64.StdEncoding.EncodeToString(key.N.Bytes())
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/xtgl/login_slogin.html":
+			if r.Method == http.MethodGet {
+				_, _ = w.Write([]byte(`<input name="csrftoken" value="test-csrf">`))
+				return
+			}
+			http.SetCookie(w, &http.Cookie{Name: "JSESSIONID", Value: "mock", Path: "/"})
+			http.SetCookie(w, &http.Cookie{Name: "route", Value: "mock", Path: "/"})
+			_, _ = w.Write([]byte("login ok"))
+			return
+		case "/xtgl/login_getPublicKey.html":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"modulus":"` + modulus + `","exponent":"10001"}`))
+			return
+		case "/kbcx/xskbcx_cxXsgrkb.html":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"xsxx":{"NJDM_ID":"2026","ZYH_ID":"zyh-2026"}}`))
+			return
+		case "/xsxk/zzxkyzb_cxZzxkYzbPartDisplay.html":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"tmpList":[{"jxbmc":"(2026-2027-1)-A0001001-01","kcmc":"高等数学A","rl":"60","xkrs":"10"}]}`))
+			return
+		}
+		t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+		http.NotFound(w, r)
+	}))
+}
+
+func writeCaptureWorkspace(t *testing.T) paths {
+	t.Helper()
+	p := setupAgentHTTPWorkspace(t, fixturePayload([]map[string]any{
+		{"displayCode": "(2026-2027-1)-A0001001-01", "jxbmc": "(2026-2027-1)-A0001001-01", "kcmc": "高等数学A", "sksj": "星期一第1-2节{1-17周}"},
+	}))
+	cfg := defaultKillCourseConfig("2026-2027-1")
+	cfg.Course = map[string]string{"(2026-2027-1)-A0001001-01": "1"}
+	cfg.NewJWLogin.Username = "test-user"
+	cfg.NewJWLogin.Password = "test-password"
+	cfg.NewJWLogin.Level = "0"
+	cfg.CasLogin.Username = "test-user"
+	cfg.CasLogin.Password = "test-password"
+	cfg.CasLogin.Level = "1"
+	mustWriteJSON(t, p.killConfigPath, cfg)
+	return p
+}
+
+func TestHandleLiveCapacityCaptureWritesDiagnosis(t *testing.T) {
+	server := newCaptureMockServer(t)
+	defer server.Close()
+	oldJW, oldSSO := kcclient.BaseJWURL, kcclient.BaseSSOURL
+	kcclient.BaseJWURL, kcclient.BaseSSOURL = server.URL, server.URL
+	t.Cleanup(func() { kcclient.BaseJWURL, kcclient.BaseSSOURL = oldJW, oldSSO })
+
+	writeCaptureWorkspace(t)
+	payload, err := json.Marshal(LiveCapacityCaptureRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rr := httptest.NewRecorder()
+	handleLiveCapacityCapture(rr, httptest.NewRequest(http.MethodPost, "/api/course/live-capacity/capture", bytes.NewReader(payload)))
+	var resp LiveCapacityCaptureResponse
+	if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if !resp.OK {
+		t.Fatalf("capture failed: %+v", resp)
+	}
+	if resp.Path == "" {
+		t.Fatalf("capture did not report a diagnosis path")
+	}
+	if _, statErr := os.Stat(resp.Path); statErr != nil {
+		t.Fatalf("diagnosis file missing: %v", statErr)
+	}
+	if !containsString(resp.TopKeys, "tmpList") {
+		t.Fatalf("expected tmpList in top-level keys, got %v", resp.TopKeys)
+	}
+	if resp.ArrayCount["$.tmpList"] != 1 {
+		t.Fatalf("expected one tmpList row, got %v", resp.ArrayCount)
+	}
+	if !strings.Contains(resp.Preview, "xkrs") {
+		t.Fatalf("expected capacity-like fields in preview, got %q", resp.Preview)
+	}
+	data, readErr := os.ReadFile(resp.Path)
+	if readErr != nil {
+		t.Fatalf("read diagnosis: %v", readErr)
+	}
+	if !strings.Contains(string(data), `"response"`) {
+		t.Fatalf("diagnosis is missing the raw response: %s", data)
+	}
+}
+
+func TestHandleLiveCapacityCaptureRejectsNonLoopbackBase(t *testing.T) {
+	t.Setenv("HDU_KILLCOURSE_BASE_URL", "http://example.com")
+	writeCaptureWorkspace(t)
+	payload, err := json.Marshal(LiveCapacityCaptureRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rr := httptest.NewRecorder()
+	handleLiveCapacityCapture(rr, httptest.NewRequest(http.MethodPost, "/api/course/live-capacity/capture", bytes.NewReader(payload)))
+	var resp LiveCapacityCaptureResponse
+	if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp.OK || !strings.Contains(resp.Error, "回环") {
+		t.Fatalf("expected loopback rejection, got %+v", resp)
+	}
+}
+
+func containsString(values []string, target string) bool {
+	for _, value := range values {
+		if value == target {
+			return true
+		}
+	}
+	return false
 }

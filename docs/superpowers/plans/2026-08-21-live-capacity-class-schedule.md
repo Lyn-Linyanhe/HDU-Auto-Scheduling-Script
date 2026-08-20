@@ -38,6 +38,12 @@
      供后续 mock 精确对齐（KillCourse 的 `GetIsCourseOk` 只关心 `tmpList` 空/非空，
      但本方案需要人数列）。
    - 交付物：附录 A（接口路径 + 请求参数 + 响应 JSON 示例）。
+
+   > 工具已就绪（2026-08-21）：Smart Agent 新增
+   > `POST /api/course/live-capacity/capture`（复用登录会话调用余量接口，原样保存
+   > 原始响应到 `capacity-capture-diagnosis.json` 并返回 `topKeys/arrayCounts` 摘要），
+   > 已含 testlab 端到端验收（`smart-agent-live-capacity-capture-check.js`）与 Go 集成测试。
+   > 现在只差一次真实登录会话触发抓包、回填附录 A 字段。
 2. **testlab 扩展**：`handlePartDisplay` 返回真实 shape（含人数字段），并新增
    `capacity-ok` / `capacity-fail` 场景；`killcourse.course.sample.json` 补每门课
    的容量字段。

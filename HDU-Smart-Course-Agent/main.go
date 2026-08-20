@@ -25,6 +25,7 @@ import (
 	"sync"
 	"time"
 
+	kcclient "github.com/cr4n5/HDU-KillCourse/client"
 	kcconfig "github.com/cr4n5/HDU-KillCourse/config"
 	agentexecutor "hdu-smart-course-agent/executor"
 )
@@ -218,6 +219,22 @@ type CourseCapacityResponse struct {
 	Items           []CourseCapacityItem `json:"items"`
 	Warnings        []string             `json:"warnings,omitempty"`
 	Error           string               `json:"error,omitempty"`
+}
+
+type LiveCapacityCaptureRequest struct {
+	XueNian    string `json:"xueNian,omitempty"`
+	XueQi      string `json:"xueQi,omitempty"`
+	FilterList string `json:"filterList,omitempty"`
+}
+
+type LiveCapacityCaptureResponse struct {
+	OK         bool           `json:"ok"`
+	Path       string         `json:"path,omitempty"`
+	Bytes      int            `json:"bytes,omitempty"`
+	TopKeys    []string       `json:"topKeys,omitempty"`
+	ArrayCount map[string]int `json:"arrayCounts,omitempty"`
+	Preview    string         `json:"preview,omitempty"`
+	Error      string         `json:"error,omitempty"`
 }
 
 type Risk struct {
@@ -698,6 +715,7 @@ func main() {
 	mux.HandleFunc("/api/class-schedule", handleClassSchedule)
 	mux.HandleFunc("/api/class-options", handleClassOptions)
 	mux.HandleFunc("/api/course-capacity", handleCourseCapacity)
+	mux.HandleFunc("/api/course/live-capacity/capture", handleLiveCapacityCapture)
 	mux.HandleFunc("/api/plan", handlePlan)
 	mux.HandleFunc("/api/execution/dry-run", handleExecutionDryRun)
 	mux.HandleFunc("/api/execution/authorize", handleExecutionAuthorize)
@@ -1363,6 +1381,193 @@ func capacityItem(course Course) CourseCapacityItem {
 		Remaining:   remaining,
 		Full:        full,
 	}
+}
+
+func handleLiveCapacityCapture(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBytes)
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	var req LiveCapacityCaptureRequest
+	if err := json.Unmarshal(body, &req); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	p := discoverPaths()
+	fail := func(message string) {
+		writeJSON(w, LiveCapacityCaptureResponse{OK: false, Error: message})
+	}
+	if !fileExists(p.killConfigPath) {
+		fail("未找到 KillCourse/config.json，请先在设置中完成登录并写入配置，再进行抓包诊断。")
+		return
+	}
+	if !fileExists(p.coursePath) {
+		fail("未找到课程库文件 course.json，请先在主站完成课程导出。")
+		return
+	}
+	cfgData, err := os.ReadFile(p.killConfigPath)
+	if err != nil {
+		fail("读取 KillCourse/config.json 失败: " + err.Error())
+		return
+	}
+	var cfg KillCourseConfig
+	if err := json.Unmarshal(cfgData, &cfg); err != nil {
+		fail("解析 KillCourse/config.json 失败: " + err.Error())
+		return
+	}
+	kcCfg, err := killCourseConfigToUpstream(cfg)
+	if err != nil {
+		fail(err.Error())
+		return
+	}
+	xueNian := strings.TrimSpace(req.XueNian)
+	if xueNian == "" {
+		xueNian = cfg.Time.XueNian
+	}
+	xueQi := strings.TrimSpace(req.XueQi)
+	if xueQi == "" {
+		xueQi = cfg.Time.XueQi
+	}
+	xqm, err := captureTermXqm(xueQi)
+	if err != nil {
+		fail(err.Error())
+		return
+	}
+	filterList := strings.TrimSpace(req.FilterList)
+	if filterList == "" {
+		for code := range cfg.Course {
+			filterList = code
+			break
+		}
+	}
+
+	// Acceptance-only hook: point the vendored client at a loopback mock so the
+	// capture flow can be exercised without touching the real teaching system.
+	if base := strings.TrimSpace(os.Getenv("HDU_KILLCOURSE_BASE_URL")); base != "" {
+		if !isLoopbackBaseURL(base) {
+			fail("HDU_KILLCOURSE_BASE_URL 必须是本机回环地址")
+			return
+		}
+		kcclient.BaseJWURL = strings.TrimRight(base, "/")
+		kcclient.BaseSSOURL = strings.TrimRight(base, "/")
+	}
+
+	ex, err := agentexecutor.New(kcCfg, p.coursePath)
+	if err != nil {
+		fail("抓包前登录/加载失败: " + err.Error())
+		return
+	}
+	rawBody, err := ex.SearchCourseRaw(xueNian, xqm, filterList)
+	if err != nil {
+		fail("查询余量接口失败: " + err.Error())
+		return
+	}
+
+	storage := map[string]any{
+		"schemaVersion": schemaVersion,
+		"capturedAt":    time.Now().Format(time.RFC3339),
+		"xueNian":       xueNian,
+		"xueQi":         xueQi,
+		"xqm":           xqm,
+		"filterList":    filterList,
+		"url":           kcclient.BaseJWURL + "/xsxk/zzxkyzb_cxZzxkYzbPartDisplay.html?gnmkdm=N253512",
+		"responseBytes": len(rawBody),
+		"response":      truncateUTF8(string(rawBody), 512<<10),
+	}
+	path := filepath.Join(p.workspace, "capacity-capture-diagnosis.json")
+	if err := writeJSONFile(path, storage); err != nil {
+		fail("写入抓包诊断文件失败: " + err.Error())
+		return
+	}
+	topKeys, arrayCounts := describeJSON(rawBody)
+	writeJSON(w, LiveCapacityCaptureResponse{
+		OK:         true,
+		Path:       path,
+		Bytes:      len(rawBody),
+		TopKeys:    topKeys,
+		ArrayCount: arrayCounts,
+		Preview:    truncateUTF8(string(rawBody), 1200),
+	})
+}
+
+func captureTermXqm(xueQi string) (string, error) {
+	switch strings.TrimSpace(xueQi) {
+	case "1":
+		return "3", nil
+	case "2":
+		return "12", nil
+	default:
+		return "", errors.New("学年学期格式错误（XueQi 仅支持 1/2）")
+	}
+}
+
+func isLoopbackBaseURL(value string) bool {
+	parsed, err := neturl.Parse(value)
+	if err != nil {
+		return false
+	}
+	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+		return false
+	}
+	host := parsed.Hostname()
+	return host == "127.0.0.1" || host == "localhost" || host == "::1"
+}
+
+func describeJSON(body []byte) ([]string, map[string]int) {
+	var value any
+	if err := json.Unmarshal(body, &value); err != nil {
+		return nil, nil
+	}
+	keys := topJSONKeys(value)
+	counts := map[string]int{}
+	collectJSONArrayCounts(value, counts)
+	return keys, counts
+}
+
+func topJSONKeys(value any) []string {
+	mapped, ok := value.(map[string]any)
+	if !ok {
+		return nil
+	}
+	keys := make([]string, 0, len(mapped))
+	for key := range mapped {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+func collectJSONArrayCounts(value any, out map[string]int) {
+	switch typed := value.(type) {
+	case map[string]any:
+		for key, nested := range typed {
+			if arr, isArr := nested.([]any); isArr {
+				out["$."+key] = len(arr)
+			}
+			collectJSONArrayCounts(nested, out)
+		}
+	case []any:
+		for _, nested := range typed {
+			collectJSONArrayCounts(nested, out)
+		}
+	}
+}
+
+func truncateUTF8(text string, maxBytes int) string {
+	if len(text) <= maxBytes {
+		return text
+	}
+	text = text[:maxBytes]
+	for len(text) > 0 && text[len(text)-1]&0xC0 == 0x80 {
+		text = text[:len(text)-1]
+	}
+	return text + "…[截断]"
 }
 
 func handlePlan(w http.ResponseWriter, r *http.Request) {
