@@ -12,6 +12,7 @@ HDU-Auto-Scheduling-Script.exe
 
 ## 最新发布
 
+- **v0.5.8**（2026-08-21）：抓包工具升级——`POST /api/course/live-capacity/capture` 现在输出并保存 `rowSchema`（响应首行每个字段的 键名/类型/样例），真实余量字段一眼可见，实时人数功能从抓包到回填的路更顺。
 - **v0.5.7**（2026-08-21）：稳定强化与抓包诊断就绪——执行器登录过期自动重登+重试、蹲课瞬时失败保留+指数退避、执行过程实时状态上报、个人课表自动刷新失败指数退避、接口响应 shape 变更诊断回归；新增容索引“抓包诊断”工具 `POST /api/course/live-capacity/capture`（保存原始响应为 `capacity-capture-diagnosis.json`，供实时人数功能回填字段）。
 - **v0.5.6**（2026-08-21）：Smart Agent 新增行政班课表：`/api/class-options` + `/api/class-schedule?className=` 按授课班级聚合展示；发布包新增 `SHA256SUMS.txt` 与 `.zip.sha256` 完整性校验。
 - **v0.5.5**（2026-08-21）：Smart Agent 内置一键执行：授权票据通过后可直接在应用内选课/退课/蹲课（vendor 的 HDU-KillCourse v1.4.9，含 start/status/stop API、1.5s 状态轮询、执行的日志写入与成功后的个人课表自动刷新）。
