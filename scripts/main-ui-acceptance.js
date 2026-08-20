@@ -131,57 +131,69 @@ async function devtoolsTargets(port) {
 }
 
 async function startBrowser(url, viewport, screenshotPath, port, expectedPath) {
-  const profile = path.join(tempRoot, `browser-${port}`);
-  fs.mkdirSync(profile, { recursive: true });
-  let browser;
-  let cdp;
-  try {
-    browser = spawn(browserPath, [
-      '--headless=new',
-      '--disable-gpu',
-      '--disable-extensions',
-      '--no-first-run',
-      '--no-default-browser-check',
-      `--window-size=${viewport.width},${viewport.height}`,
-      `--remote-debugging-port=${port}`,
-      `--user-data-dir=${profile}`,
-      url,
-    ], { stdio: 'ignore', windowsHide: true });
-    let page;
-    const deadline = Date.now() + 12000;
-    while (!page && Date.now() < deadline) {
-      try {
-        const targets = await devtoolsTargets(port);
-        page = targets.find((target) => target.type === 'page' && target.url.includes(expectedPath));
-      } catch {}
-      if (!page) await sleep(150);
+  let lastError;
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    const attemptPort = attempt === 1 ? port : await findFreePort();
+    const profile = path.join(tempRoot, `browser-${attempt}-${Date.now()}`);
+    fs.mkdirSync(profile, { recursive: true });
+    let browser;
+    let cdp;
+    try {
+      browser = spawn(browserPath, [
+        '--headless=new',
+        '--disable-gpu',
+        '--disable-extensions',
+        '--no-first-run',
+        '--no-default-browser-check',
+        `--window-size=${viewport.width},${viewport.height}`,
+        `--remote-debugging-port=${attemptPort}`,
+        `--user-data-dir=${profile}`,
+        url,
+      ], { stdio: 'ignore', windowsHide: true });
+      let page;
+      const deadline = Date.now() + 15000;
+      while (!page && Date.now() < deadline) {
+        try {
+          const targets = await devtoolsTargets(attemptPort);
+          page = targets.find((target) => target.type === 'page' && target.url.includes(expectedPath));
+        } catch {}
+        if (!page) await sleep(150);
+      }
+      if (!page) {
+        await terminateProcess(browser);
+        browser = null;
+        lastError = new Error(`No page target for ${url}`);
+        await sleep(600);
+        continue;
+      }
+      cdp = connectCDP(page.webSocketDebuggerUrl);
+      await cdp.opened;
+      await cdp.send('Page.enable');
+      await cdp.send('Runtime.enable');
+      await cdp.send('Log.enable');
+      await cdp.send('Emulation.setDeviceMetricsOverride', {
+        width: viewport.width,
+        height: viewport.height,
+        deviceScaleFactor: 1,
+        mobile: viewport.mobile,
+      });
+      const pageErrors = [];
+      cdp.on('Runtime.exceptionThrown', (event) => pageErrors.push(event.exceptionDetails?.text || 'runtime exception'));
+      cdp.on('Log.entryAdded', (event) => {
+        if (event.entry?.level === 'error') pageErrors.push(event.entry.text || 'console error');
+      });
+      await cdp.send('Page.addScriptToEvaluateOnNewDocument', {
+        source: 'window.__hduUiErrors = []; window.addEventListener("error", (event) => window.__hduUiErrors.push(String(event.message || event.error || "error")));',
+      });
+      return { browser, cdp, pageErrors, screenshotPath };
+    } catch (error) {
+      if (cdp) cdp.close();
+      await terminateProcess(browser);
+      lastError = error;
+      await sleep(600);
     }
-    if (!page) throw new Error(`No page target for ${url}`);
-    cdp = connectCDP(page.webSocketDebuggerUrl);
-    await cdp.opened;
-    await cdp.send('Page.enable');
-    await cdp.send('Runtime.enable');
-    await cdp.send('Log.enable');
-    await cdp.send('Emulation.setDeviceMetricsOverride', {
-      width: viewport.width,
-      height: viewport.height,
-      deviceScaleFactor: 1,
-      mobile: viewport.mobile,
-    });
-    const pageErrors = [];
-    cdp.on('Runtime.exceptionThrown', (event) => pageErrors.push(event.exceptionDetails?.text || 'runtime exception'));
-    cdp.on('Log.entryAdded', (event) => {
-      if (event.entry?.level === 'error') pageErrors.push(event.entry.text || 'console error');
-    });
-    await cdp.send('Page.addScriptToEvaluateOnNewDocument', {
-      source: 'window.__hduUiErrors = []; window.addEventListener("error", (event) => window.__hduUiErrors.push(String(event.message || event.error || "error")));',
-    });
-    return { browser, cdp, pageErrors, screenshotPath };
-  } catch (error) {
-    if (cdp) cdp.close();
-    await terminateProcess(browser);
-    throw error;
   }
+  throw lastError || new Error(`No page target for ${url}`);
 }
 
 async function evaluate(cdp, expression) {
