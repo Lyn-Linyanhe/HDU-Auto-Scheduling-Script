@@ -31,10 +31,11 @@ type fixture struct {
 }
 
 type mockServer struct {
-	scenario string
-	key      string
-	course   fixture
-	personal fixture
+	scenario     string
+	key          string
+	course       fixture
+	personal     fixture
+	killCourseKC fixture
 }
 
 func main() {
@@ -79,11 +80,18 @@ func serve(listen, scenario, fixtureDir string) error {
 	if err != nil {
 		return err
 	}
+	killCourseKC := fixture{}
+	if scenario == "killcourse" || scenario == "killcourse-fail" {
+		killCourseKC, err = readFixture(filepath.Join(fixtureDir, "killcourse.course.sample.json"))
+		if err != nil {
+			return err
+		}
+	}
 	key, err := newPublicKey()
 	if err != nil {
 		return err
 	}
-	mock := &mockServer{scenario: scenario, key: key, course: course, personal: personal}
+	mock := &mockServer{scenario: scenario, key: key, course: course, personal: personal, killCourseKC: killCourseKC}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, map[string]any{"ok": true, "scenario": scenario})
@@ -93,6 +101,15 @@ func serve(listen, scenario, fixtureDir string) error {
 	mux.HandleFunc("/jw/public-key", mock.handlePublicKey)
 	mux.HandleFunc("/jw/course", mock.handleCourse)
 	mux.HandleFunc("/jw/personal", mock.handlePersonal)
+	// KillCourse protocol routes (used by the executor via kcclient.BaseJWURL).
+	mux.HandleFunc("/xtgl/login_slogin.html", mock.handleKillCourseLogin)
+	mux.HandleFunc("/xtgl/login_getPublicKey.html", mock.handlePublicKey)
+	mux.HandleFunc("/kbcx/xskbcx_cxXsgrkb.html", mock.handleStuInfo)
+	mux.HandleFunc("/xsxk/zzxkyzb_cxZzxkYzbIndex.html", mock.handleSelectIndex)
+	mux.HandleFunc("/xsxk/zzxkyzbjk_cxJxbWithKchZzxkYzb.html", mock.handleDoJxbId)
+	mux.HandleFunc("/xsxk/zzxkyzbjk_xkBcZyZzxkYzb.html", mock.handleKillSelect)
+	mux.HandleFunc("/xsxk/zzxkyzb_tuikBcZzxkYzb.html", mock.handleKillDrop)
+	mux.HandleFunc("/xsxk/zzxkyzb_cxZzxkYzbPartDisplay.html", mock.handlePartDisplay)
 
 	listener, err := net.Listen("tcp", listen)
 	if err != nil {
@@ -218,6 +235,90 @@ func (m *mockServer) handlePersonal(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, map[string]any{"kbList": m.personal.Items})
 }
 
+// handleKillCourseLogin serves the newjw login page (GET csrftoken) and the
+// password login POST that the vendored KillCourse client uses.
+func (m *mockServer) handleKillCourseLogin(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodGet {
+		_, _ = io.WriteString(w, `<input name="csrftoken" value="test-csrf">`)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "invalid form", http.StatusBadRequest)
+		return
+	}
+	if r.Form.Get("yhm") != testUsername || strings.TrimSpace(r.Form.Get("mm")) == "" {
+		_, _ = io.WriteString(w, "用户名或密码错误")
+		return
+	}
+	http.SetCookie(w, &http.Cookie{Name: "JSESSIONID", Value: "mock-session", Path: "/", HttpOnly: true})
+	http.SetCookie(w, &http.Cookie{Name: "route", Value: "mock-route", Path: "/", HttpOnly: true})
+	_, _ = io.WriteString(w, "login ok")
+}
+
+// handleStuInfo returns the student profile the course executor caches.
+func (m *mockServer) handleStuInfo(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, map[string]any{"xsxx": map[string]any{"NJDM_ID": "2026", "ZYH_ID": "zyh-2026"}})
+}
+
+// handleSelectIndex returns the course-selection configuration page parsed by
+// GetClientBodyConfig. XkkzId values deliberately avoid hyphens because the
+// upstream parser extracts them with a \w+ pattern.
+func (m *mockServer) handleSelectIndex(w http.ResponseWriter, _ *http.Request) {
+	const page = `<input name="ccdm" value="ccdm-1">` +
+		`<input name="bh_id" value="2026">` +
+		`<input name="jg_id_1" value="jg-1">` +
+		`<input name="xsbj" value="xsbj-1">` +
+		`<input name="xz" value="4">` +
+		`<input name="mzm" value="mzm-1">` +
+		`<input name="xslbdm" value="xslbdm-1">` +
+		`<input name="xbm" value="xbm-1">` +
+		`<input name="zyfx_id" value="zyfx-1">` +
+		`<input name="xqh_id" value="xqh-1">` +
+		`<a role="tab" onclick="queryCourse(this,'01','xkkz01')">主修</a>` +
+		`<a role="tab" onclick="queryCourse(this,'10','xkkz10')">通识选修</a>`
+	_, _ = io.WriteString(w, page)
+}
+
+// handleDoJxbId returns the do_jxb_id mapping for every fixture item.
+func (m *mockServer) handleDoJxbId(w http.ResponseWriter, _ *http.Request) {
+	items := make([]map[string]any, 0, len(m.killCourseKC.Items))
+	for _, item := range m.killCourseKC.Items {
+		jxbID, _ := item["jxb_id"].(string)
+		if jxbID == "" {
+			continue
+		}
+		items = append(items, map[string]any{"jxb_id": jxbID, "do_jxb_id": "do-" + jxbID})
+	}
+	writeJSON(w, items)
+}
+
+// handleKillSelect returns the course-selection outcome for the scenario.
+func (m *mockServer) handleKillSelect(w http.ResponseWriter, _ *http.Request) {
+	if m.scenario == "killcourse-fail" {
+		writeJSON(w, map[string]any{"flag": "0", "msg": "人数已满"})
+		return
+	}
+	writeJSON(w, map[string]any{"flag": "1", "msg": "选课成功"})
+}
+
+// handleKillDrop reports a successful drop for every scenario.
+func (m *mockServer) handleKillDrop(w http.ResponseWriter, _ *http.Request) {
+	_, _ = io.WriteString(w, `"1"`)
+}
+
+// handlePartDisplay reports capacity for wait mode (tmpList non-empty).
+func (m *mockServer) handlePartDisplay(w http.ResponseWriter, _ *http.Request) {
+	items := make([]map[string]any, 0, len(m.killCourseKC.Items))
+	for _, item := range m.killCourseKC.Items {
+		jxbmc, _ := item["jxbmc"].(string)
+		if jxbmc == "" {
+			continue
+		}
+		items = append(items, map[string]any{"jxbmc": jxbmc})
+	}
+	writeJSON(w, map[string]any{"tmpList": items})
+}
+
 func readFixture(name string) (fixture, error) {
 	data, err := os.ReadFile(name)
 	if err != nil {
@@ -243,7 +344,7 @@ func newPublicKey() (string, error) {
 
 func knownScenario(value string) bool {
 	switch value {
-	case "success", "bad-password", "forbidden", "malformed-course", "empty-course", "timeout", "personal-failure":
+	case "success", "bad-password", "forbidden", "malformed-course", "empty-course", "timeout", "personal-failure", "killcourse", "killcourse-fail":
 		return true
 	default:
 		return false

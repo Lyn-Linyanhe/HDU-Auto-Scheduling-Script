@@ -158,6 +158,17 @@
         <div id="authorization-result" class="readiness-summary empty">尚未生成授权票据。</div>
         <div id="package-result" class="readiness-summary empty">尚未生成启动包。</div>
       </section>
+      <section class="work-block inline-exec-block">
+        <div class="panel-head"><h3>内置一键执行</h3><span id="inline-exec-badge" class="badge">未执行</span></div>
+        <p class="muted">生成授权票据后，可直接在当前应用内调用内置执行器选课/退课；执行结果会写入执行日志并显示在下方。蹲课模式会按配置的间隔持续轮询余量，有余量即自动选课。</p>
+        <div class="confirm-row">
+          <label class="check-row"><input id="wait-enabled" type="checkbox" /> 蹲课模式</label>
+          <button id="inline-exec-start" class="primary-btn" type="button" disabled>一键执行（当前计划）</button>
+          <button id="inline-exec-stop" class="ghost-btn" type="button" disabled>停止执行</button>
+        </div>
+        <div id="inline-exec-state" class="readiness-summary empty">尚未执行。</div>
+        <div id="inline-exec-list" class="course-list empty"></div>
+      </section>
     </section>
 
     <section id="stage-panel-4" class="stage-panel" data-stage-panel="4" role="tabpanel" aria-labelledby="stage-tab-4" tabindex="-1" hidden>

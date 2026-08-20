@@ -184,8 +184,20 @@ func CasQrLogin(c *client.Client, cfg *config.Config) error {
 	return nil
 }
 
-// Login 根据Level优先级登录
+// Login 根据Level优先级登录，并在成功后把 cookies 保存回 config.json
+// （兼容上游行为）。
 func Login(cfg *config.Config) (*client.Client, error) {
+	return login(cfg, true)
+}
+
+// LoginSave 与 Login 行为一致，但可控制是否把 cookies 写回 config.json。
+// 由本仓库的执行器使用：Smart Agent 不希望登录过程覆盖工作目录里的
+// 配置文件，因此选择不落盘。
+func LoginSave(cfg *config.Config, save bool) (*client.Client, error) {
+	return login(cfg, save)
+}
+
+func login(cfg *config.Config, save bool) (*client.Client, error) {
 	// 创建一个新的客户端
 	c := client.NewClient(cfg)
 
@@ -256,9 +268,11 @@ func Login(cfg *config.Config) (*client.Client, error) {
 	}
 
 	// 保存cookies
-	err := c.SaveCookies(cfg)
-	if err != nil {
-		return nil, err
+	if save {
+		err := c.SaveCookies(cfg)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	return c, nil

@@ -13,8 +13,15 @@ Local modifications (relative to upstream):
   Client.SetHTTPClient so the HTTP client and endpoints can be injected
   for tests and local mocks.
 - client/service.go: hard-coded endpoint URLs now use BaseJWURL/BaseSSOURL.
+  GetStuInfo now delegates to a new GetStuInfoForTerm(xnm, xqm) so callers can
+  use the real academic term instead of the upstream hard-coded 2022/3.
 - pkg/course/killCourse.go: SelectCourse/CancelCourse now return an error
   when the school reports failure (upstream only logged it); HandleCourse
   guards against a nil ClientBodyConfig instead of panicking.
 - pkg/login/login.go: new-JW login failure detection aligned with the
   school's error message.
+  Added LoginSave(cfg, save) so the Smart Agent executor can skip the
+  config.json cookie round-trip (Login keeps upstream behavior).
+- log/log.go: file logging is now lazy and keeps no permanent file handles
+  (upstream created log_files/ and held app.log/debug.log open at import
+  time, which leaked into the importing process's working directory).

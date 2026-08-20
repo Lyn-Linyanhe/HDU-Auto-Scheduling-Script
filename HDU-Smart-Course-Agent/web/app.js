@@ -46,6 +46,9 @@ const state = {
   executionLog: null,
   lastExecutionRefreshKey: '',
   fallbackRecommendations: null,
+  inlineExecution: null,
+  inlineExecutionTimer: null,
+  inlineExecutionPolling: false,
 };
 
 const els = {
@@ -125,6 +128,12 @@ const els = {
   buildFallbackRecommendations: document.getElementById('build-fallback-recommendations'),
   fallbackRecommendationSummary: document.getElementById('fallback-recommendation-summary'),
   fallbackRecommendationList: document.getElementById('fallback-recommendation-list'),
+  waitEnabled: document.getElementById('wait-enabled'),
+  inlineExecStart: document.getElementById('inline-exec-start'),
+  inlineExecStop: document.getElementById('inline-exec-stop'),
+  inlineExecBadge: document.getElementById('inline-exec-badge'),
+  inlineExecState: document.getElementById('inline-exec-state'),
+  inlineExecList: document.getElementById('inline-exec-list'),
   configSummary: document.getElementById('config-summary'),
   configPreserveList: document.getElementById('config-preserve-list'),
   configActionList: document.getElementById('config-action-list'),
@@ -261,6 +270,8 @@ function resetPlanState() {
   state.executionLog = null;
   state.lastExecutionRefreshKey = '';
   state.fallbackRecommendations = null;
+  stopInlinePolling();
+  state.inlineExecution = null;
   state.activeStage = 1;
 }
 
@@ -966,6 +977,10 @@ function renderAuthorization() {
   els.confirmPhrase.disabled = !canAuthorize;
   els.buildPackage.disabled = !authorization || authorizationExpired;
   els.confirmPhrase.placeholder = canAuthorize ? '输入确认短语' : '等待 dry-run 通过';
+  const inlineRunning = Boolean(state.inlineExecution?.active || state.inlineExecutionPolling);
+  els.inlineExecStart.disabled = !authorization || authorizationExpired || inlineRunning;
+  els.inlineExecStop.disabled = !inlineRunning;
+  renderInlineExecution();
   if (canAuthorize) {
     els.confirmHint.textContent = `请输入确认短语：${dryRun.confirmationPhrase}`;
   } else {
@@ -1678,6 +1693,164 @@ async function parseExecutionLog() {
   }
 }
 
+function renderInlineExecution() {
+  const exec = state.inlineExecution;
+  if (!exec) {
+    els.inlineExecBadge.textContent = '未执行';
+    els.inlineExecState.classList.add('empty');
+    els.inlineExecState.textContent = '尚未执行。';
+    els.inlineExecList.classList.add('empty');
+    els.inlineExecList.innerHTML = '';
+    renderExecutionLog();
+    return;
+  }
+  if (exec.active) {
+    els.inlineExecBadge.textContent = '执行中';
+    els.inlineExecState.classList.remove('empty');
+    els.inlineExecState.textContent = `执行中…开始于 ${formatTimestamp(exec.startedAt)}，正在轮询状态。`;
+  } else {
+    const done = exec.log?.summary;
+    els.inlineExecBadge.textContent = done ? `已完成 ${done.success} 成功` : '已结束';
+    els.inlineExecState.classList.remove('empty');
+    els.inlineExecState.textContent = exec.message || '执行已结束。';
+  }
+  const log = exec.log;
+  if (log && log.items && log.items.length) {
+    els.inlineExecList.classList.remove('empty');
+    els.inlineExecList.innerHTML = log.items.map((item) => `
+      <div class="course-row ${item.status === 'failed' ? 'danger' : ''}">
+        <div><strong>${escapeHtml(item.courseCode || '')}</strong> · ${escapeHtml(inlineActionLabel(item.action))}</div>
+        <div>状态：${escapeHtml(inlineStatusLabel(item.status))}${item.message ? ' · ' + escapeHtml(item.message) : ''}</div>
+      </div>`).join('');
+  } else {
+    els.inlineExecList.classList.add('empty');
+    els.inlineExecList.innerHTML = '';
+  }
+  renderExecutionLog();
+}
+
+function inlineActionLabel(action) {
+  if (action === 'select') return '选课';
+  if (action === 'drop') return '退课';
+  if (action === 'wait') return '蹲课';
+  if (action === 'unknown') return '未知';
+  return action || '-';
+}
+
+function inlineStatusLabel(status) {
+  const labels = { pending: '排队中', running: '进行中', success: '成功', failed: '失败', skipped: '已跳过' };
+  return labels[status] || status || '-';
+}
+
+function startInlinePolling() {
+  stopInlinePolling();
+  state.inlineExecutionPolling = true;
+  const poll = async () => {
+    try {
+      const status = await fetchJSON('/api/execution/status');
+      if (!status.ok) throw new Error(status.error || '查询执行状态失败');
+      if (!state.inlineExecution) state.inlineExecution = { active: false, log: null, message: '' };
+      state.inlineExecution.log = status.log || null;
+      if (status.active) {
+        state.inlineExecution.active = true;
+        state.inlineExecution.startedAt = status.startedAt || state.inlineExecution.startedAt;
+      } else {
+        state.inlineExecution.active = false;
+        if (state.inlineExecution.message !== '已请求停止执行。' && !status.log) {
+          state.inlineExecution.message = '执行已结束。';
+        }
+        stopInlinePolling();
+        if (state.inlineExecution.message !== '已请求停止执行。' && !status.log) {
+          state.inlineExecution.message = '执行完成，但尚未生成日志。';
+        }
+        if (status.log) {
+          state.executionLog = status.log;
+          state.inlineExecution.message = status.log.summary
+            ? `执行完成：成功 ${status.log.summary.success}，失败 ${status.log.summary.failed}，跳过 ${status.log.summary.skipped}。`
+            : '执行完成。';
+        }
+        refreshAfterInlineExecution(status.log);
+      }
+      renderInlineExecution();
+      renderAuthorization();
+    } catch (error) {
+      els.statusMessage.textContent = `轮询执行状态失败：${String(error.message || error)}`;
+    }
+  };
+  poll();
+  state.inlineExecutionTimer = setInterval(poll, 1500);
+}
+
+function stopInlinePolling() {
+  if (state.inlineExecutionTimer) {
+    clearInterval(state.inlineExecutionTimer);
+    state.inlineExecutionTimer = null;
+  }
+  state.inlineExecutionPolling = false;
+}
+
+async function startInlineExecution() {
+  if (!state.plan || !state.generatedConfig || !state.authorization) return;
+  const waitEnabled = els.waitEnabled.checked;
+  try {
+    const result = await fetchJSON('/api/execution/start', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json; charset=utf-8' },
+      body: JSON.stringify({
+        plan: state.plan,
+        generatedConfig: state.generatedConfig,
+        authorization: state.authorization,
+        waitEnabled,
+      }),
+    });
+    if (!result.ok) throw new Error(result.error || '启动执行失败');
+    state.executionPackage = null;
+    state.executionLog = null;
+    state.lastExecutionRefreshKey = '';
+    state.inlineExecution = {
+      active: true,
+      ticketId: result.ticketId || state.authorization.ticketId,
+      startedAt: new Date().toISOString(),
+      log: null,
+      message: '',
+    };
+    els.statusMessage.textContent = (waitEnabled ? '蹲课模式已启动' : '一键执行已启动') + '，正在执行…';
+    startInlinePolling();
+  } catch (error) {
+    els.statusMessage.textContent = String(error.message || error);
+  } finally {
+    renderAuthorization();
+  }
+}
+
+async function stopInlineExecution() {
+  try {
+    const result = await fetchJSON('/api/execution/stop', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json; charset=utf-8' },
+      body: '{}',
+    });
+    if (!result.ok) throw new Error(result.error || '停止失败');
+    if (state.inlineExecution) {
+      state.inlineExecution.message = '已请求停止执行。';
+    }
+    els.statusMessage.textContent = '已请求停止执行，等待任务收尾…';
+    startInlinePolling();
+  } catch (error) {
+    els.statusMessage.textContent = String(error.message || error);
+    renderAuthorization();
+  }
+}
+
+function refreshAfterInlineExecution(log) {
+  if (!log || !log.summary || log.summary.success === 0) return;
+  const key = executionSuccessRefreshKey(log);
+  if (!key || key === '[]' || key === state.lastExecutionRefreshKey) return;
+  state.lastExecutionRefreshKey = key;
+  els.statusMessage.textContent = '检测到选课或退课成功，正在刷新个人课表...';
+  refreshLiveSchedule({ reason: 'execution-success' });
+}
+
 async function buildFallbackRecommendations() {
   if (!state.plan || !state.executionLog) return;
   els.buildFallbackRecommendations.disabled = true;
@@ -1788,6 +1961,8 @@ els.writeConfig.addEventListener('change', () => {
 els.authorizeExecution.addEventListener('click', authorizeExecution);
 els.buildPackage.addEventListener('click', buildExecutionPackage);
 els.parseLog.addEventListener('click', parseExecutionLog);
+els.inlineExecStart.addEventListener('click', startInlineExecution);
+els.inlineExecStop.addEventListener('click', stopInlineExecution);
 els.buildFallbackRecommendations.addEventListener('click', buildFallbackRecommendations);
 els.downloadPlan.addEventListener('click', downloadPlan);
 els.downloadConfig.addEventListener('click', downloadConfig);

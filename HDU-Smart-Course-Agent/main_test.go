@@ -12,6 +12,9 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	agentexecutor "hdu-smart-course-agent/executor"
+	kcconfig "github.com/cr4n5/HDU-KillCourse/config"
 )
 
 func fixturePayload(items []map[string]any) CoursePayload {
@@ -2063,4 +2066,221 @@ func TestNormalizePayloadMergesSameTeachingClassRows(t *testing.T) {
 	if !strings.Contains(courses[0].TimeText, "星期二") || !strings.Contains(courses[0].TimeText, "星期五") {
 		t.Fatalf("TimeText not combined: %q", courses[0].TimeText)
 	}
+}
+
+type blockingExecutionRunner struct {
+	started chan struct{}
+}
+
+func (b *blockingExecutionRunner) RunOnce(ctx context.Context, _ map[string]string) ([]agentexecutor.ExecutionEvent, error) {
+	select {
+	case <-b.started:
+	default:
+		close(b.started)
+	}
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
+func (b *blockingExecutionRunner) StartWait(ctx context.Context, _ map[string]string, _ int, _ <-chan struct{}) ([]agentexecutor.ExecutionEvent, error) {
+	select {
+	case <-b.started:
+	default:
+		close(b.started)
+	}
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
+func executionStartFixture(t *testing.T) (paths, ActionPlan, KillCourseConfig, ExecutionAuthorization) {
+	t.Helper()
+	payload := fixturePayload([]map[string]any{
+		{
+			"displayCode": "(2026-2027-1)-A0001001-01",
+			"jxbmc":       "(2026-2027-1)-A0001001-01",
+			"kch_id":      "kill-kch-01",
+			"jxb_id":      "kill-jxb-01",
+			"jxbzc":       "2026;202601",
+			"kklxmc":      "主修课程",
+			"kcmc":        "高等数学A",
+			"sksj":        "星期一第1-2节{1-17周}",
+		},
+	})
+	p := setupAgentHTTPWorkspace(t, payload)
+	plan := ActionPlan{
+		SchemaVersion: 1,
+		Term:          "2026-2027-1",
+		Mode:          "scheduling",
+		Source:        "test",
+		Select: []Course{{
+			ID:            "select-1",
+			DisplayCode:   "(2026-2027-1)-A0001001-01",
+			RawCourseCode: "(2026-2027-1)-A0001001",
+			CourseName:    "高等数学A",
+			TimeText:      "星期一第1-2节{1-17周}",
+		}},
+	}
+	cfg := defaultKillCourseConfig(plan.Term)
+	cfg.Course = map[string]string{"(2026-2027-1)-A0001001-01": "1"}
+	cfg.NewJWLogin.Username = "test-user"
+	cfg.NewJWLogin.Password = "test-password"
+	cfg.CasLogin.Username = "test-user"
+	cfg.CasLogin.Password = "test-password"
+	auth := buildStartAuthorization(t, plan, cfg, p)
+	return p, plan, cfg, auth
+}
+
+func buildStartAuthorization(t *testing.T, plan ActionPlan, cfg KillCourseConfig, p paths) ExecutionAuthorization {
+	t.Helper()
+	command, _ := killCourseCommand(p)
+	now := time.Now()
+	auth := ExecutionAuthorization{
+		Authorized:         true,
+		TicketID:           "ticket-start-1",
+		PlanHash:           planExecutionHash(plan),
+		ConfigHash:         configExecutionHash(cfg),
+		CreatedAt:          now.Format(time.RFC3339),
+		ExpiresAt:          now.Add(15 * time.Minute).Format(time.RFC3339),
+		Command:            command,
+		KillCourseDir:      p.killCourseDir,
+		ConfigPath:         p.killConfigPath,
+		ActionCounts:       countExecutionActions(cfg.Course),
+		HasDropRisk:        false,
+		DropRiskAccepted:   false,
+		ConfirmationPhrase: expectedConfirmationPhrase(false),
+	}
+	mustWriteJSON(t, p.approvalPath, auth)
+	return auth
+}
+
+func postExecutionStart(t *testing.T, plan ActionPlan, cfg KillCourseConfig, auth ExecutionAuthorization) *httptest.ResponseRecorder {
+	t.Helper()
+	body, err := json.Marshal(ExecutionStartRequest{Plan: plan, GeneratedConfig: &cfg, Authorization: auth})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/execution/start", bytes.NewReader(body))
+	rr := httptest.NewRecorder()
+	handleExecutionStart(rr, req)
+	return rr
+}
+
+func TestHandleExecutionStartBlocksMissingCredentials(t *testing.T) {
+	_, plan, cfg, auth := executionStartFixture(t)
+	cfg.NewJWLogin.Password = ""
+	cfg.CasLogin.Password = ""
+	rr := postExecutionStart(t, plan, cfg, auth)
+	var resp ExecutionStartResponse
+	if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if resp.OK || !strings.Contains(resp.Error, "登录凭据") {
+		t.Fatalf("expected missing-credentials error, got %+v", resp)
+	}
+}
+
+func TestHandleExecutionStartRejectsExpiredTicket(t *testing.T) {
+	p, plan, cfg, auth := executionStartFixture(t)
+	auth.ExpiresAt = time.Now().Add(-time.Minute).Format(time.RFC3339)
+	mustWriteJSON(t, p.approvalPath, auth)
+	rr := postExecutionStart(t, plan, cfg, auth)
+	var resp ExecutionStartResponse
+	if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if resp.OK || !strings.Contains(resp.Error, "过期") {
+		t.Fatalf("expected expired-ticket error, got %+v", resp)
+	}
+}
+
+func injectBlockingRunner(t *testing.T) *blockingExecutionRunner {
+	t.Helper()
+	blocked := &blockingExecutionRunner{started: make(chan struct{})}
+	old := newExecutionRunner
+	newExecutionRunner = func(*kcconfig.Config, string) (executionRunner, error) { return blocked, nil }
+	t.Cleanup(func() { newExecutionRunner = old })
+	return blocked
+}
+
+func TestHandleExecutionStartAndStop(t *testing.T) {
+	p, plan, cfg, auth := executionStartFixture(t)
+	blocked := injectBlockingRunner(t)
+
+	rr := postExecutionStart(t, plan, cfg, auth)
+	var start ExecutionStartResponse
+	if err := json.NewDecoder(rr.Body).Decode(&start); err != nil {
+		t.Fatalf("decode start: %v", err)
+	}
+	if !start.OK || !start.Started {
+		t.Fatalf("start failed: %+v", start)
+	}
+	select {
+	case <-blocked.started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("executor runner never started")
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/execution/status", nil)
+	statusRR := httptest.NewRecorder()
+	handleExecutionStatus(statusRR, req)
+	var status ExecutionStatusResponse
+	if err := json.NewDecoder(statusRR.Body).Decode(&status); err != nil {
+		t.Fatalf("decode status: %v", err)
+	}
+	if !status.Active || status.TicketID != auth.TicketID {
+		t.Fatalf("expected active run, got %+v", status)
+	}
+
+	stopReq := httptest.NewRequest(http.MethodPost, "/api/execution/stop", nil)
+	stopRR := httptest.NewRecorder()
+	handleExecutionStop(stopRR, stopReq)
+	var stop ExecutionStopResponse
+	if err := json.NewDecoder(stopRR.Body).Decode(&stop); err != nil {
+		t.Fatalf("decode stop: %v", err)
+	}
+	if !stop.OK {
+		t.Fatalf("stop failed: %+v", stop)
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		statusRR = httptest.NewRecorder()
+		handleExecutionStatus(statusRR, httptest.NewRequest(http.MethodGet, "/api/execution/status", nil))
+		_ = json.NewDecoder(statusRR.Body).Decode(&status)
+		if !status.Active {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if status.Active {
+		t.Fatalf("execution still active after stop: %+v", status)
+	}
+	if p.executionLogPath == "" {
+		t.Fatalf("execution log path empty")
+	}
+}
+
+func TestHandleExecutionStartRejectsConcurrentRun(t *testing.T) {
+	_, plan, cfg, auth := executionStartFixture(t)
+	injectBlockingRunner(t)
+
+	rr := postExecutionStart(t, plan, cfg, auth)
+	var first ExecutionStartResponse
+	if err := json.NewDecoder(rr.Body).Decode(&first); err != nil {
+		t.Fatalf("decode first start: %v", err)
+	}
+	if !first.OK || !first.Started {
+		t.Fatalf("first start failed: %+v", first)
+	}
+
+	second := postExecutionStart(t, plan, cfg, auth)
+	var next ExecutionStartResponse
+	if err := json.NewDecoder(second.Body).Decode(&next); err != nil {
+		t.Fatalf("decode second start: %v", err)
+	}
+	if next.OK || !strings.Contains(next.Error, "已有执行任务") {
+		t.Fatalf("expected concurrent-run error, got %+v", next)
+	}
+
+	handleExecutionStop(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, "/api/execution/stop", nil))
 }

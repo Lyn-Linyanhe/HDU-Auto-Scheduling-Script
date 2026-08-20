@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"strings"
 	"time"
+	"net/url"
 
 	"github.com/antchfx/htmlquery"
 	"github.com/cr4n5/HDU-KillCourse/util"
@@ -440,8 +441,15 @@ func (c *Client) GetReleases() (*GetReleasesResp, error) {
 }
 
 func (c *Client) GetStuInfo() error {
-	// 课表
-	url := BaseJWURL + "/kbcx/xskbcx_cxXsgrkb.html?gnmkdm=N2151&xnm=2022&xqm=3"
+	// Legacy call kept for upstream compatibility; executor code should use
+	// GetStuInfoForTerm with the real academic year/semester.
+	return c.GetStuInfoForTerm("2022", "3")
+}
+
+// GetStuInfoForTerm fetches the student profile for the given academic year
+// and semester code (xqm) and stores NJDM_ID/ZYH_ID on the client.
+func (c *Client) GetStuInfoForTerm(xnm, xqm string) error {
+	url := BaseJWURL + "/kbcx/xskbcx_cxXsgrkb.html?gnmkdm=N2151&xnm=" + url.QueryEscape(xnm) + "&xqm=" + url.QueryEscape(xqm)
 	result, _, err := c.Get(url, nil)
 	if err != nil {
 		return err
@@ -449,7 +457,6 @@ func (c *Client) GetStuInfo() error {
 	if strings.Contains(string(result), "统一身份认证") {
 		return errors.New("可能登录过期")
 	}
-	// 解析info
 	var stuInfoResp GetStuInfoResp
 	err = json.Unmarshal(result, &stuInfoResp)
 	if err != nil {

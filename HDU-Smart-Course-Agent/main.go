@@ -22,7 +22,11 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
+
+	agentexecutor "hdu-smart-course-agent/executor"
+	kcconfig "github.com/cr4n5/HDU-KillCourse/config"
 )
 
 //go:embed web/*
@@ -293,6 +297,35 @@ type ExecutionPackageResponse struct {
 	OK      bool             `json:"ok"`
 	Package ExecutionPackage `json:"package,omitempty"`
 	Error   string           `json:"error,omitempty"`
+}
+
+type ExecutionStartRequest struct {
+	Plan            ActionPlan             `json:"plan"`
+	GeneratedConfig *KillCourseConfig      `json:"generatedConfig,omitempty"`
+	Authorization   ExecutionAuthorization `json:"authorization"`
+	WaitEnabled     bool                   `json:"waitEnabled"`
+}
+
+type ExecutionStartResponse struct {
+	OK       bool   `json:"ok"`
+	Started  bool   `json:"started"`
+	TicketID string `json:"ticketId,omitempty"`
+	LogPath  string `json:"logPath,omitempty"`
+	Error    string `json:"error,omitempty"`
+}
+
+type ExecutionStatusResponse struct {
+	OK        bool         `json:"ok"`
+	Active    bool         `json:"active"`
+	TicketID  string       `json:"ticketId,omitempty"`
+	StartedAt string       `json:"startedAt,omitempty"`
+	Log       ExecutionLog `json:"log,omitempty"`
+	Error     string       `json:"error,omitempty"`
+}
+
+type ExecutionStopResponse struct {
+	OK    bool   `json:"ok"`
+	Error string `json:"error,omitempty"`
 }
 
 type ExecutionLogRequest struct {
@@ -566,6 +599,63 @@ type paths struct {
 	fallbackRecsPath string
 }
 
+// execution-state keeps track of the single in-process KillCourse executor
+// run. Only one run may be active at a time and /stop cancels its context.
+var (
+	execStateMu   sync.Mutex
+	execCancel    context.CancelFunc
+	execActive    bool
+	execTicketID  string
+	execStartedAt string
+)
+
+// executionRunner is the subset of the executor package the Smart Agent needs.
+// newExecutionRunner is a variable so tests can inject a fake that never
+// touches the network.
+type executionRunner interface {
+	RunOnce(ctx context.Context, plan map[string]string) ([]agentexecutor.ExecutionEvent, error)
+	StartWait(ctx context.Context, plan map[string]string, intervalSec int, done <-chan struct{}) ([]agentexecutor.ExecutionEvent, error)
+}
+
+var newExecutionRunner = func(cfg *kcconfig.Config, coursePath string) (executionRunner, error) {
+	return agentexecutor.New(cfg, coursePath)
+}
+
+func execManagerStart(ticketID string, cancel context.CancelFunc) bool {
+	execStateMu.Lock()
+	defer execStateMu.Unlock()
+	if execActive {
+		return false
+	}
+	execCancel = cancel
+	execActive = true
+	execTicketID = ticketID
+	execStartedAt = time.Now().Format(time.RFC3339)
+	return true
+}
+
+func execManagerFinish() {
+	execStateMu.Lock()
+	defer execStateMu.Unlock()
+	if execCancel != nil {
+		execCancel()
+	}
+	execCancel = nil
+	execActive = false
+	execTicketID = ""
+	execStartedAt = ""
+}
+
+func execManagerStop() (bool, string, string) {
+	execStateMu.Lock()
+	defer execStateMu.Unlock()
+	if !execActive || execCancel == nil {
+		return false, "", ""
+	}
+	execCancel()
+	return true, execTicketID, execStartedAt
+}
+
 func main() {
 	listenAddr, listenPort := smartAgentListenAddress()
 	mux := http.NewServeMux()
@@ -585,6 +675,9 @@ func main() {
 	mux.HandleFunc("/api/execution/authorize", handleExecutionAuthorize)
 	mux.HandleFunc("/api/execution/package", handleExecutionPackage)
 	mux.HandleFunc("/api/execution/parse-log", handleExecutionParseLog)
+	mux.HandleFunc("/api/execution/start", handleExecutionStart)
+	mux.HandleFunc("/api/execution/status", handleExecutionStatus)
+	mux.HandleFunc("/api/execution/stop", handleExecutionStop)
 	mux.HandleFunc("/api/execution/fallback-recommendations", handleFallbackRecommendations)
 
 	if os.Getenv("HDU_AGENT_NO_BROWSER") != "1" {
@@ -1337,6 +1430,214 @@ func handleExecutionParseLog(w http.ResponseWriter, r *http.Request) {
 		resp.Path = p.executionLogPath
 	}
 	writeJSON(w, resp)
+}
+
+func handleExecutionStart(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBytes)
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	var req ExecutionStartRequest
+	if err := json.Unmarshal(body, &req); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	p := discoverPaths()
+
+	dryRun, cfg, err := buildStartDryRun(req, p)
+	if err != nil {
+		writeJSON(w, ExecutionStartResponse{OK: false, Error: err.Error()})
+		return
+	}
+	if err := validateExecutionAuthorization(req.Authorization, req.Plan, &cfg, dryRun, p.approvalPath); err != nil {
+		writeJSON(w, ExecutionStartResponse{OK: false, Error: err.Error()})
+		return
+	}
+	if !hasUsableKillCredentials(cfg) {
+		writeJSON(w, ExecutionStartResponse{OK: false, Error: "KillCourse 配置缺少可用的登录凭据（账号密码或 cookies），请先完成登录。"})
+		return
+	}
+	if !fileExists(p.coursePath) {
+		writeJSON(w, ExecutionStartResponse{OK: false, Error: "未找到课程库文件：" + p.coursePath})
+		return
+	}
+	kcCfg, err := killCourseConfigToUpstream(cfg)
+	if err != nil {
+		writeJSON(w, ExecutionStartResponse{OK: false, Error: err.Error()})
+		return
+	}
+	planMap := make(map[string]string, len(cfg.Course))
+	for code, action := range cfg.Course {
+		planMap[code] = action
+	}
+
+	if err := writeJSONFile(p.actionPlanPath, req.Plan); err != nil {
+		writeJSON(w, ExecutionStartResponse{OK: false, Error: "写入执行计划失败：" + err.Error()})
+		return
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	if !execManagerStart(req.Authorization.TicketID, cancel) {
+		writeJSON(w, ExecutionStartResponse{OK: false, Error: "已有执行任务正在运行，请先停止或等待其完成。"})
+		return
+	}
+
+	go func() {
+		defer execManagerFinish()
+		ex, newErr := newExecutionRunner(kcCfg, p.coursePath)
+		if newErr != nil {
+			_ = writeExecutionEventsLog(p, req.Authorization, nil, newErr)
+			return
+		}
+		var events []agentexecutor.ExecutionEvent
+		if req.WaitEnabled {
+			events, err = ex.StartWait(ctx, planMap, cfg.WaitCourse.Interval, nil)
+		} else {
+			events, err = ex.RunOnce(ctx, planMap)
+		}
+		_ = writeExecutionEventsLog(p, req.Authorization, events, err)
+	}()
+
+	writeJSON(w, ExecutionStartResponse{OK: true, Started: true, TicketID: req.Authorization.TicketID, LogPath: p.executionLogPath})
+}
+
+func handleExecutionStatus(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	p := discoverPaths()
+	execStateMu.Lock()
+	active := execActive
+	ticketID := execTicketID
+	startedAt := execStartedAt
+	execStateMu.Unlock()
+	resp := ExecutionStatusResponse{OK: true, Active: active, TicketID: ticketID, StartedAt: startedAt}
+	if data, err := os.ReadFile(p.executionLogPath); err == nil {
+		var runLog ExecutionLog
+		if json.Unmarshal(data, &runLog) == nil {
+			resp.Log = runLog
+		}
+	}
+	writeJSON(w, resp)
+}
+
+func handleExecutionStop(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	execManagerStop()
+	writeJSON(w, ExecutionStopResponse{OK: true})
+}
+
+func buildStartDryRun(req ExecutionStartRequest, p paths) (ExecutionDryRun, KillCourseConfig, error) {
+	if err := validatePlanExecutionEligibility(req.Plan); err != nil {
+		return ExecutionDryRun{}, KillCourseConfig{}, err
+	}
+	if len(req.Plan.Select) == 0 && len(req.Plan.Drop) == 0 {
+		return ExecutionDryRun{}, KillCourseConfig{}, errors.New("当前执行计划没有选课或退课动作")
+	}
+	var cfg KillCourseConfig
+	if req.GeneratedConfig != nil && len(req.GeneratedConfig.Course) > 0 {
+		cfg = *req.GeneratedConfig
+	} else {
+		generated, _, err := buildKillCourseConfig(req.Plan, p.killConfigPath)
+		if err != nil {
+			return ExecutionDryRun{}, KillCourseConfig{}, err
+		}
+		cfg = generated
+	}
+	command, entryFound := killCourseCommand(p)
+	hasDrop := len(req.Plan.Drop) > 0
+	return ExecutionDryRun{
+		Ready:              true,
+		CanExecute:         true,
+		Summary:            "内置执行器检查通过",
+		WorkspaceDir:       p.workspace,
+		KillCourseDir:      p.killCourseDir,
+		ConfigPath:         p.killConfigPath,
+		EntryPath:          killCourseEntryPath(p),
+		LogPath:            p.executionLogPath,
+		Command:            command,
+		EntryFound:         entryFound,
+		ActionCounts:       countExecutionActions(cfg.Course),
+		HasDropRisk:        hasDrop,
+		ConfirmationPhrase: expectedConfirmationPhrase(hasDrop),
+		GeneratedAt:        time.Now().Format(time.RFC3339),
+	}, cfg, nil
+}
+
+func hasUsableKillCredentials(cfg KillCourseConfig) bool {
+	if hasUsableCookie(cfg) {
+		return true
+	}
+	return (cfg.CasLogin.Username != "" && cfg.CasLogin.Password != "") ||
+		(cfg.NewJWLogin.Username != "" && cfg.NewJWLogin.Password != "")
+}
+
+func killCourseConfigToUpstream(cfg KillCourseConfig) (*kcconfig.Config, error) {
+	data, err := json.Marshal(cfg)
+	if err != nil {
+		return nil, fmt.Errorf("序列化 KillCourse 配置失败: %w", err)
+	}
+	var kcCfg kcconfig.Config
+	if err := json.Unmarshal(data, &kcCfg); err != nil {
+		return nil, fmt.Errorf("解析 KillCourse 配置失败: %w", err)
+	}
+	return &kcCfg, nil
+}
+
+func writeExecutionEventsLog(p paths, auth ExecutionAuthorization, events []agentexecutor.ExecutionEvent, runErr error) error {
+	now := time.Now().Format(time.RFC3339)
+	items := make([]ExecutionLogItem, 0, len(events)+1)
+	for _, ev := range events {
+		items = append(items, ExecutionLogItem{
+			CourseCode: ev.CourseCode,
+			Action:     ev.Action,
+			Status:     ev.Status,
+			Message:    ev.Message,
+			StartedAt:  ev.StartedAt,
+			FinishedAt: ev.FinishedAt,
+			RawLines:   []string{ev.Message},
+		})
+	}
+	if runErr != nil && !errors.Is(runErr, context.Canceled) {
+		items = append(items, ExecutionLogItem{
+			CourseCode: "",
+			Action:     "unknown",
+			Status:     "failed",
+			Message:    runErr.Error(),
+			FinishedAt: now,
+			RawLines:   []string{runErr.Error()},
+		})
+	}
+	if len(items) == 0 {
+		items = append(items, ExecutionLogItem{
+			CourseCode: "",
+			Action:     "unknown",
+			Status:     "skipped",
+			Message:    "执行已停止，未产生动作结果",
+			FinishedAt: now,
+			RawLines:   []string{},
+		})
+	}
+	runLog := ExecutionLog{
+		SchemaVersion: schemaVersion,
+		Source:        "executor",
+		GeneratedAt:   now,
+		LogPath:       p.executionLogPath,
+		PlanHash:      auth.PlanHash,
+		ConfigHash:    auth.ConfigHash,
+		Summary:       summarizeExecutionLog(items),
+		Items:         items,
+	}
+	return writeJSONFile(p.executionLogPath, runLog)
 }
 
 func handleFallbackRecommendations(w http.ResponseWriter, r *http.Request) {

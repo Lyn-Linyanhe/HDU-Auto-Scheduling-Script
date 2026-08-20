@@ -1,0 +1,38 @@
+{
+  "schemaVersion": 1,
+  "source": "killcourse-sample",
+  "term": "2026-2027-1",
+  "version": 1,
+  "items": [
+    {
+      "displayCode": "(2026-2027-1)-A0001001-01",
+      "courseCode": "(2026-2027-1)-A0001001",
+      "jxb_id": "kill-jxb-01",
+      "jxbmc": "(2026-2027-1)-A0001001-01",
+      "kcmc": "高等数学A",
+      "jzgxx": "张老师",
+      "sksj": "星期一第1-2节{1-17周}",
+      "jxdd": "第6教研楼101",
+      "xf": "5.00",
+      "kklxmc": "主修课程",
+      "kch_id": "kill-kch-01",
+      "jxbzc": "2026;202601",
+      "kklxdm": "01"
+    },
+    {
+      "displayCode": "(2026-2027-1)-A0002001-01",
+      "courseCode": "(2026-2027-1)-A0002001",
+      "jxb_id": "kill-jxb-02",
+      "jxbmc": "(2026-2027-1)-A0002001-01",
+      "kcmc": "大学英语",
+      "jzgxx": "王老师",
+      "sksj": "星期一第3-4节{1-17周}",
+      "jxdd": "第3教研楼301",
+      "xf": "2.00",
+      "kklxmc": "通识选修课",
+      "kch_id": "kill-kch-02",
+      "jxbzc": "2026;202601",
+      "kklxdm": "10"
+    }
+  ]
+}
