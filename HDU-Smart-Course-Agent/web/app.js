@@ -17,6 +17,10 @@ const state = {
   courseCapacityStale: false,
   courseInspectorCode: '',
   courseSchedule: null,
+  classOptions: [],
+  classOptionsWarnings: [],
+  classInspectorName: '',
+  classSchedule: null,
   lockedCodes: new Set(),
   targetPayload: null,
   targetPath: '',
@@ -88,6 +92,9 @@ const els = {
   courseIntelDetail: document.getElementById('course-intel-detail'),
   courseCapacitySummary: document.getElementById('course-capacity-summary'),
   classScheduleResult: document.getElementById('class-schedule-result'),
+  classOptionSelect: document.getElementById('class-option-select'),
+  classScheduleQuery: document.getElementById('class-schedule-query'),
+  adminClassScheduleResult: document.getElementById('admin-class-schedule-result'),
   refresh: document.getElementById('refresh'),
   targetFile: document.getElementById('target-file'),
   targetCount: document.getElementById('target-count'),
@@ -568,6 +575,93 @@ function renderCourseSchedule() {
   els.classScheduleResult.classList.remove('empty');
   els.classScheduleResult.innerHTML = `
     <div class="schedule-result-head"><strong>教学班课表</strong><span>${items.length} 个教学班</span></div>
+    ${warningHtml}
+    <div class="schedule-list">${items.map(scheduleCard).join('')}</div>
+  `;
+}
+
+function renderClassOptions() {
+  const options = state.classOptions || [];
+  const select = els.classOptionSelect;
+  select.innerHTML = '';
+  if (!options.length) {
+    const empty = document.createElement('option');
+    empty.value = '';
+    empty.textContent = '无行政班数据';
+    select.appendChild(empty);
+    select.disabled = true;
+    els.classScheduleQuery.disabled = true;
+    if (state.classOptionsWarnings.length) {
+      els.adminClassScheduleResult.classList.remove('empty');
+      els.adminClassScheduleResult.innerHTML = `<div class="course-warning">${escapeHtml(state.classOptionsWarnings.join('；'))}</div>`;
+    } else {
+      els.adminClassScheduleResult.classList.add('empty');
+      els.adminClassScheduleResult.textContent = '选择行政班后可查看该班全部课程。';
+    }
+    return;
+  }
+  const placeholder = document.createElement('option');
+  placeholder.value = '';
+  placeholder.textContent = '选择行政班';
+  select.appendChild(placeholder);
+  for (const item of options) {
+    const option = document.createElement('option');
+    option.value = item.name;
+    option.textContent = `${item.name}（${item.count}）`;
+    select.appendChild(option);
+  }
+  select.disabled = false;
+  if (state.classInspectorName && options.some((item) => item.name === state.classInspectorName)) {
+    select.value = state.classInspectorName;
+  } else {
+    select.value = '';
+    state.classInspectorName = '';
+  }
+  els.classScheduleQuery.disabled = !state.classInspectorName;
+  renderAdminClassSchedule();
+}
+
+async function queryClassSchedule() {
+  const name = els.classOptionSelect.value;
+  if (!name) return;
+  state.classInspectorName = name;
+  els.classScheduleQuery.disabled = true;
+  els.classScheduleQuery.textContent = '正在查询...';
+  try {
+    const params = new URLSearchParams({ className: name });
+    const result = await fetchJSON(`/api/class-schedule?${params.toString()}`);
+    if (!result.ok) throw new Error(result.error || '读取班级课表失败');
+    state.classSchedule = result;
+    renderAdminClassSchedule();
+  } catch (error) {
+    state.classSchedule = { items: [], warnings: [String(error.message || error)] };
+    renderAdminClassSchedule();
+    els.statusMessage.textContent = String(error.message || error);
+  } finally {
+    els.classScheduleQuery.disabled = !state.classInspectorName;
+    els.classScheduleQuery.textContent = '查看班级课表';
+  }
+}
+
+function renderAdminClassSchedule() {
+  const schedule = state.classSchedule;
+  if (!schedule) {
+    els.adminClassScheduleResult.classList.add('empty');
+    els.adminClassScheduleResult.textContent = '选择行政班后可查看该班全部课程。';
+    return;
+  }
+  const items = (schedule.items || []).map(normalizeCourseOption);
+  const warningHtml = (schedule.warnings || []).length
+    ? `<div class="course-warning">${escapeHtml(schedule.warnings.join('；'))}</div>`
+    : '';
+  if (!items.length) {
+    els.adminClassScheduleResult.classList.add('empty');
+    els.adminClassScheduleResult.innerHTML = `${warningHtml}未找到该行政班的课程。`;
+    return;
+  }
+  els.adminClassScheduleResult.classList.remove('empty');
+  els.adminClassScheduleResult.innerHTML = `
+    <div class="schedule-result-head"><strong>行政班课表${state.classInspectorName ? ' · ' + escapeHtml(state.classInspectorName) : ''}</strong><span>${items.length} 门课程</span></div>
     ${warningHtml}
     <div class="schedule-list">${items.map(scheduleCard).join('')}</div>
   `;
@@ -1355,12 +1449,22 @@ async function refreshStatus() {
     state.courseCapacitySourceUpdatedAt = '';
     state.courseCapacityStale = false;
   }
+  const classOptions = await fetchJSON('/api/class-options').catch(() => null);
+  if (classOptions?.ok) {
+    state.classOptions = classOptions.items || [];
+    state.classOptionsWarnings = classOptions.warnings || [];
+  } else {
+    state.classOptions = [];
+    state.classOptionsWarnings = [String(classOptions?.error || '读取行政班列表失败')];
+  }
   state.courseSchedule = null;
+  state.classSchedule = null;
   renderStatus();
   renderTarget();
   renderCurrent();
   renderLiveSync();
   renderCourseIntel();
+  renderClassOptions();
   renderWorkflow();
   await maybeStartAutoRefresh();
 }
@@ -1913,6 +2017,13 @@ els.courseOptionSelect.addEventListener('change', () => {
   renderCourseIntel();
 });
 els.courseScheduleQuery.addEventListener('click', queryCourseSchedule);
+els.classOptionSelect.addEventListener('change', () => {
+  state.classInspectorName = els.classOptionSelect.value;
+  state.classSchedule = null;
+  els.classScheduleQuery.disabled = !state.classInspectorName;
+  renderAdminClassSchedule();
+});
+els.classScheduleQuery.addEventListener('click', queryClassSchedule);
 els.settingsToggle.addEventListener('click', () => setSettingsDrawer(true));
 els.settingsClose.addEventListener('click', () => setSettingsDrawer(false));
 els.settingsDrawer.addEventListener('keydown', handleSettingsKeydown);

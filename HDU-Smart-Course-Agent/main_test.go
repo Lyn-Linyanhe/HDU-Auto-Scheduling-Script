@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -2283,4 +2284,103 @@ func TestHandleExecutionStartRejectsConcurrentRun(t *testing.T) {
 	}
 
 	handleExecutionStop(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, "/api/execution/stop", nil))
+}
+
+func courseLibraryClassFixture() CoursePayload {
+	return fixturePayload([]map[string]any{
+		{"displayCode": "(2026-2027-1)-A0001001-01", "jxbmc": "(2026-2027-1)-A0001001-01", "kcmc": "高等数学A", "jxbzc": "2026;202601"},
+		{"displayCode": "(2026-2027-1)-A0001001-02", "jxbmc": "(2026-2027-1)-A0001001-02", "kcmc": "高等数学A", "jxbzc": "202602"},
+		{"displayCode": "(2026-2027-1)-A0002001-01", "jxbmc": "(2026-2027-1)-A0002001-01", "kcmc": "大学英语", "className": "202601"},
+	})
+}
+
+func TestSplitClassNamesSegments(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		want []string
+	}{
+		{"semicolon", "2026;202601", []string{"2026", "202601"}},
+		{"mixed and dedupe", "2026届1班,2026届2班、2026届1班", []string{"2026届1班", "2026届2班"}},
+		{"empty", "", nil},
+		{"whitespace", "   ", nil},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := splitClassNames(c.in)
+			if !reflect.DeepEqual(got, c.want) {
+				t.Fatalf("splitClassNames(%q) = %v, want %v", c.in, got, c.want)
+			}
+		})
+	}
+}
+
+func TestCollectClassOptionsCounts(t *testing.T) {
+	courses := []Course{
+		{DisplayCode: "a", ClassName: "2026;202601"},
+		{DisplayCode: "b", ClassName: "202602"},
+		{DisplayCode: "c", ClassName: "202601"},
+	}
+	options := collectClassOptions(courses)
+	if len(options) != 3 {
+		t.Fatalf("expect 3 distinct classes, got %v", options)
+	}
+	if options[0].Name != "2026" || options[0].Count != 1 {
+		t.Fatalf("first option wrong: %+v", options[0])
+	}
+	if options[1].Name != "202601" || options[1].Count != 2 {
+		t.Fatalf("second option wrong: %+v", options[1])
+	}
+	if options[2].Name != "202602" || options[2].Count != 1 {
+		t.Fatalf("third option wrong: %+v", options[2])
+	}
+}
+
+func TestFilterCoursesByClassSegments(t *testing.T) {
+	courses := []Course{
+		{DisplayCode: "a", ClassName: "2026;202601"},
+		{DisplayCode: "b", ClassName: "202602"},
+	}
+	got := filterCoursesByClass(courses, "202601")
+	if len(got) != 1 || got[0].DisplayCode != "a" {
+		t.Fatalf("expected only class-202601 course a, got %+v", got)
+	}
+	if got := filterCoursesByClass(courses, "不存在的班"); len(got) != 0 {
+		t.Fatalf("expected empty result, got %+v", got)
+	}
+}
+
+func TestHandleClassOptions(t *testing.T) {
+	setupAgentHTTPWorkspace(t, courseLibraryClassFixture())
+	rr := httptest.NewRecorder()
+	handleClassOptions(rr, httptest.NewRequest(http.MethodGet, "/api/class-options", nil))
+	var resp ClassOptionsResponse
+	if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if !resp.OK || resp.Total != 3 || len(resp.Items) != 3 {
+		t.Fatalf("unexpected class options: %+v", resp)
+	}
+}
+
+func TestHandleClassScheduleByClassName(t *testing.T) {
+	setupAgentHTTPWorkspace(t, courseLibraryClassFixture())
+	req := httptest.NewRequest(http.MethodGet, "/api/class-schedule?className="+url.QueryEscape("202601"), nil)
+	rr := httptest.NewRecorder()
+	handleClassSchedule(rr, req)
+	var resp ClassScheduleResponse
+	if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if !resp.OK || resp.ClassName != "202601" {
+		t.Fatalf("unexpected response: %+v", resp)
+	}
+	if len(resp.Items) != 2 {
+		t.Fatalf("expected 2 courses for class 202601, got %+v", resp.Items)
+	}
+	for _, item := range resp.Items {
+		if !strings.Contains(item.DisplayCode, "01") {
+			t.Fatalf("wrong course matched: %+v", item)
+		}
+	}
 }

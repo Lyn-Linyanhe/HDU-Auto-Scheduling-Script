@@ -50,6 +50,9 @@
 
 ## P3：行政班课表（class schedule）
 
+> 状态：**第一版已落地（2026-08-21）**。离线聚合 + 前端展示 + mock 验收均完成；
+> 若“行政班”指独立行政班编排表（非授课班级），仍走抓包流程，见下文风险。
+
 ### 事实澄清（避免重复抓包）
 
 - `course.json` 已含 `jxbzc`（授课班级），`GetCourseToExcelResp` 已含
@@ -69,6 +72,18 @@
 3. 前端“班级课表”抽屉：选择授课班级 → 该班全部教学班列表 + 时间线视图。
 4. testlab 补 `班级课表` fixture（复用 `killcourse.course.sample.json` 的
    多 jxbzc 数据）；UI smoke 无溢出。
+
+### P3 落地记录（2026-08-21）
+
+- 后端：`/api/class-options` 返回去重行政班列表（`name/count`）；`/api/class-schedule`
+  支持 `className` 查询参数，按 `className/jxbzc` 的**分隔符分段精确匹配**
+  （兼容 `;` `；` `,` `，` `、` 空格等连接符，见 `main.go` splitClassNames）。
+- 前端：课程情报区新增“选择行政班 + 查看班级课表”，复用 scheduleCard 渲染该班全部课程。
+- 数据：`testdata/course.sample.json` 补 `jxbzc`，全链路（testlab 导出 → Smart Agent）
+  可携带班级数据。
+- 验收：新增 `scripts/smart-agent-class-schedule-check.js`（`/api/class-options` 计数、
+  `className=202601` 2 门 / `202602` 1 门），已接入 `testlab-acceptance.ps1`；桌面与
+  390px 移动 UI smoke 均通过、无横向溢出。
 
 ## 依赖与风险
 

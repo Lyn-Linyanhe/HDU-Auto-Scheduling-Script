@@ -201,6 +201,10 @@ try {
   node scripts\smart-agent-ui-smoke.js
   if ($LASTEXITCODE -ne 0) { throw "Smart Agent UI/API smoke test failed." }
 
+  Write-Step "Checking Smart Agent class schedule aggregation..."
+  node scripts\smart-agent-class-schedule-check.js
+  if ($LASTEXITCODE -ne 0) { throw "Smart Agent class schedule check failed." }
+
   Write-Step "Checking Smart Agent refresh contract..."
   node scripts\smart-agent-refresh-contract-test.js
   if ($LASTEXITCODE -ne 0) { throw "Smart Agent refresh contract failed." }

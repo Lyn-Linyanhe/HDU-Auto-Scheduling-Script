@@ -175,9 +175,25 @@ type ClassScheduleResponse struct {
 	Term          string   `json:"term"`
 	GroupID       string   `json:"groupId,omitempty"`
 	DisplayCode   string   `json:"displayCode,omitempty"`
+	ClassName     string   `json:"className,omitempty"`
 	Items         []Course `json:"items"`
 	Warnings      []string `json:"warnings,omitempty"`
 	Error         string   `json:"error,omitempty"`
+}
+
+type ClassOption struct {
+	Name  string `json:"name"`
+	Count int    `json:"count"`
+}
+
+type ClassOptionsResponse struct {
+	OK            bool          `json:"ok"`
+	SchemaVersion int           `json:"schemaVersion"`
+	Term          string        `json:"term"`
+	Total         int           `json:"total"`
+	Items         []ClassOption `json:"items"`
+	Warnings      []string      `json:"warnings,omitempty"`
+	Error         string        `json:"error,omitempty"`
 }
 
 type CourseCapacityItem struct {
@@ -669,6 +685,7 @@ func main() {
 	mux.HandleFunc("/api/course", handleCourse)
 	mux.HandleFunc("/api/course-options", handleCourseOptions)
 	mux.HandleFunc("/api/class-schedule", handleClassSchedule)
+	mux.HandleFunc("/api/class-options", handleClassOptions)
 	mux.HandleFunc("/api/course-capacity", handleCourseCapacity)
 	mux.HandleFunc("/api/plan", handlePlan)
 	mux.HandleFunc("/api/execution/dry-run", handleExecutionDryRun)
@@ -1126,10 +1143,19 @@ func handleClassSchedule(w http.ResponseWriter, r *http.Request) {
 	}
 	groupID := strings.TrimSpace(r.URL.Query().Get("groupId"))
 	displayCode := strings.TrimSpace(r.URL.Query().Get("displayCode"))
-	filtered := filterCourseLibrary(courses, groupID, displayCode)
+	className := strings.TrimSpace(r.URL.Query().Get("className"))
+	var filtered []Course
 	warnings := []string{}
-	if groupID == "" && displayCode == "" {
-		warnings = append(warnings, "未提供 groupId 或 displayCode，返回全部教学班课表；行政班课表需要教务数据源提供 classId/className。")
+	if className != "" {
+		filtered = filterCoursesByClass(courses, className)
+		if len(filtered) == 0 {
+			warnings = append(warnings, fmt.Sprintf("课程库中未找到行政班 %q 的课程（className/jxbzc 缺失或名称不匹配）。", className))
+		}
+	} else {
+		filtered = filterCourseLibrary(courses, groupID, displayCode)
+		if groupID == "" && displayCode == "" {
+			warnings = append(warnings, "未提供 groupId、displayCode 或 className，返回全部教学班课表。")
+		}
 	}
 	writeJSON(w, ClassScheduleResponse{
 		OK:            true,
@@ -1137,7 +1163,34 @@ func handleClassSchedule(w http.ResponseWriter, r *http.Request) {
 		Term:          inferTerm(payload.Term, courses),
 		GroupID:       groupID,
 		DisplayCode:   displayCode,
+		ClassName:     className,
 		Items:         sortCourses(filtered),
+		Warnings:      warnings,
+	})
+}
+
+func handleClassOptions(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	p := discoverPaths()
+	courses, payload, err := loadCourses(p.coursePath)
+	if err != nil {
+		writeJSON(w, ClassOptionsResponse{OK: false, SchemaVersion: schemaVersion, Error: err.Error()})
+		return
+	}
+	options := collectClassOptions(courses)
+	warnings := []string{}
+	if len(options) == 0 {
+		warnings = append(warnings, "课程库中没有可识别的行政班数据（className/jxbzc 缺失）。")
+	}
+	writeJSON(w, ClassOptionsResponse{
+		OK:            true,
+		SchemaVersion: schemaVersion,
+		Term:          inferTerm(payload.Term, courses),
+		Total:         len(options),
+		Items:         options,
 		Warnings:      warnings,
 	})
 }
@@ -1211,6 +1264,66 @@ func courseMatchesGroup(course Course, groupID string) bool {
 		}
 	}
 	return false
+}
+
+// splitClassNames splits a className/jxbzc value into distinct class tokens.
+// The school data may join several classes with ";", "、", "," or spaces, so a
+// segment-based exact match is safer than treating the whole string as one id.
+func splitClassNames(value string) []string {
+	fields := strings.FieldsFunc(strings.TrimSpace(value), func(r rune) bool {
+		switch r {
+		case ';', '；', ',', '，', '、', '/', '\t':
+			return true
+		}
+		return r == ' ' || r == '\u3000'
+	})
+	seen := make(map[string]bool, len(fields))
+	var result []string
+	for _, field := range fields {
+		field = strings.TrimSpace(field)
+		if field == "" || seen[field] {
+			continue
+		}
+		seen[field] = true
+		result = append(result, field)
+	}
+	return result
+}
+
+func collectClassOptions(courses []Course) []ClassOption {
+	counts := make(map[string]int)
+	for _, course := range courses {
+		for _, name := range splitClassNames(course.ClassName) {
+			counts[name]++
+		}
+	}
+	names := make([]string, 0, len(counts))
+	for name := range counts {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	options := make([]ClassOption, 0, len(names))
+	for _, name := range names {
+		options = append(options, ClassOption{Name: name, Count: counts[name]})
+	}
+	return options
+}
+
+func filterCoursesByClass(courses []Course, className string) []Course {
+	target := strings.TrimSpace(className)
+	if target == "" {
+		return nil
+	}
+	filtered := make([]Course, 0, len(courses))
+	for _, course := range courses {
+		for _, name := range splitClassNames(course.ClassName) {
+			if name == target {
+				filtered = append(filtered, course)
+				break
+			}
+		}
+	}
+	return filtered
 }
 
 func capacityItem(course Course) CourseCapacityItem {
