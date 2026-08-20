@@ -108,12 +108,16 @@ async function main() {
     if (!String(capture.preview || '').includes('jxbmc')) {
       throw new Error(`capture preview missing jxbmc: ${JSON.stringify(capture)}`);
     }
+    if (!(capture.rowSchema || []).length || !capture.rowSchema.some((field) => field.key === 'jxbmc' && field.type === 'string')) {
+      throw new Error(`capture rowSchema missing jxbmc: ${JSON.stringify(capture.rowSchema)}`);
+    }
     console.log(JSON.stringify({
       ok: true,
       check: 'live_capacity_capture',
       path: capture.path,
       bytes: capture.bytes,
       topKeys: capture.topKeys,
+      rowFields: (capture.rowSchema || []).length,
     }, null, 2));
   } finally {
     await terminate(agent);

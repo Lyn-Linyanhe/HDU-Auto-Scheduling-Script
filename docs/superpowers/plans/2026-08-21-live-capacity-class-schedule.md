@@ -42,6 +42,7 @@
    > 工具已就绪（2026-08-21）：Smart Agent 新增
    > `POST /api/course/live-capacity/capture`（复用登录会话调用余量接口，原样保存
    > 原始响应到 `capacity-capture-diagnosis.json` 并返回 `topKeys/arrayCounts` 摘要），
+   > 另输出 `rowSchema`（首行各字段的键名/类型/样例），真实字段一眼可见；
    > 已含 testlab 端到端验收（`smart-agent-live-capacity-capture-check.js`）与 Go 集成测试。
    > 现在只差一次真实登录会话触发抓包、回填附录 A 字段。
 2. **testlab 扩展**：`handlePartDisplay` 返回真实 shape（含人数字段），并新增

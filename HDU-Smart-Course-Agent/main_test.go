@@ -2516,11 +2516,21 @@ func TestHandleLiveCapacityCaptureWritesDiagnosis(t *testing.T) {
 	if !strings.Contains(resp.Preview, "xkrs") {
 		t.Fatalf("expected capacity-like fields in preview, got %q", resp.Preview)
 	}
+	if len(resp.RowSchema) < 4 || resp.RowSchema[0].Key == "" || resp.RowSchema[0].Type == "" {
+		t.Fatalf("expected rowSchema fields, got %+v", resp.RowSchema)
+	}
+	fieldTypes := map[string]string{}
+	for _, field := range resp.RowSchema {
+		fieldTypes[field.Key] = field.Type
+	}
+	if fieldTypes["jxbmc"] != "string" || fieldTypes["rl"] != "string" || fieldTypes["xkrs"] != "string" {
+		t.Fatalf("unexpected rowSchema types: %+v", resp.RowSchema)
+	}
 	data, readErr := os.ReadFile(resp.Path)
 	if readErr != nil {
 		t.Fatalf("read diagnosis: %v", readErr)
 	}
-	if !strings.Contains(string(data), `"response"`) {
+	if !strings.Contains(string(data), `"response"`) || !strings.Contains(string(data), `"rowSchema"`) {
 		t.Fatalf("diagnosis is missing the raw response: %s", data)
 	}
 }

@@ -227,14 +227,21 @@ type LiveCapacityCaptureRequest struct {
 	FilterList string `json:"filterList,omitempty"`
 }
 
+type CaptureRowField struct {
+	Key    string `json:"key"`
+	Type   string `json:"type"`
+	Sample string `json:"sample,omitempty"`
+}
+
 type LiveCapacityCaptureResponse struct {
-	OK         bool           `json:"ok"`
-	Path       string         `json:"path,omitempty"`
-	Bytes      int            `json:"bytes,omitempty"`
-	TopKeys    []string       `json:"topKeys,omitempty"`
-	ArrayCount map[string]int `json:"arrayCounts,omitempty"`
-	Preview    string         `json:"preview,omitempty"`
-	Error      string         `json:"error,omitempty"`
+	OK         bool              `json:"ok"`
+	Path       string            `json:"path,omitempty"`
+	Bytes      int               `json:"bytes,omitempty"`
+	TopKeys    []string          `json:"topKeys,omitempty"`
+	ArrayCount map[string]int    `json:"arrayCounts,omitempty"`
+	RowSchema  []CaptureRowField `json:"rowSchema,omitempty"`
+	Preview    string            `json:"preview,omitempty"`
+	Error      string            `json:"error,omitempty"`
 }
 
 type Risk struct {
@@ -1469,6 +1476,8 @@ func handleLiveCapacityCapture(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	topKeys, arrayCounts := describeJSON(rawBody)
+	rowSchema := describeRowSchema(rawBody)
 	storage := map[string]any{
 		"schemaVersion": schemaVersion,
 		"capturedAt":    time.Now().Format(time.RFC3339),
@@ -1479,19 +1488,20 @@ func handleLiveCapacityCapture(w http.ResponseWriter, r *http.Request) {
 		"url":           kcclient.BaseJWURL + "/xsxk/zzxkyzb_cxZzxkYzbPartDisplay.html?gnmkdm=N253512",
 		"responseBytes": len(rawBody),
 		"response":      truncateUTF8(string(rawBody), 512<<10),
+		"rowSchema":     rowSchema,
 	}
 	path := filepath.Join(p.workspace, "capacity-capture-diagnosis.json")
 	if err := writeJSONFile(path, storage); err != nil {
 		fail("写入抓包诊断文件失败: " + err.Error())
 		return
 	}
-	topKeys, arrayCounts := describeJSON(rawBody)
 	writeJSON(w, LiveCapacityCaptureResponse{
 		OK:         true,
 		Path:       path,
 		Bytes:      len(rawBody),
 		TopKeys:    topKeys,
 		ArrayCount: arrayCounts,
+		RowSchema:  rowSchema,
 		Preview:    truncateUTF8(string(rawBody), 1200),
 	})
 }
@@ -1556,6 +1566,100 @@ func collectJSONArrayCounts(value any, out map[string]int) {
 		for _, nested := range typed {
 			collectJSONArrayCounts(nested, out)
 		}
+	}
+}
+
+// describeRowSchema extracts the field keys, JSON types and a short sample from
+// the first row of the first array found in the captured response. This makes
+// the real interface shape visible without guessing field semantics upfront.
+func describeRowSchema(body []byte) []CaptureRowField {
+	var value any
+	if err := json.Unmarshal(body, &value); err != nil {
+		return nil
+	}
+	firstRow := firstArrayRow(value)
+	if len(firstRow) == 0 {
+		return nil
+	}
+	keys := make([]string, 0, len(firstRow))
+	for key := range firstRow {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	fields := make([]CaptureRowField, 0, len(keys))
+	for _, key := range keys {
+		field := CaptureRowField{Key: key, Type: jsonValueType(firstRow[key])}
+		if sample := truncateUTF8(jsonSample(firstRow[key]), 40); sample != "" {
+			field.Sample = sample
+		}
+		fields = append(fields, field)
+	}
+	return fields
+}
+
+func firstArrayRow(value any) map[string]any {
+	switch typed := value.(type) {
+	case map[string]any:
+		for _, nested := range typed {
+			if arr, ok := nested.([]any); ok && len(arr) > 0 {
+				if row, rowOK := arr[0].(map[string]any); rowOK {
+					return row
+				}
+			}
+			if row := firstArrayRow(nested); len(row) > 0 {
+				return row
+			}
+		}
+	case []any:
+		if len(typed) > 0 {
+			if row, ok := typed[0].(map[string]any); ok {
+				return row
+			}
+		}
+		for _, nested := range typed {
+			if row := firstArrayRow(nested); len(row) > 0 {
+				return row
+			}
+		}
+	}
+	return nil
+}
+
+func jsonValueType(value any) string {
+	switch value.(type) {
+	case string:
+		return "string"
+	case float64:
+		return "number"
+	case bool:
+		return "bool"
+	case nil:
+		return "null"
+	case []any:
+		return "array"
+	case map[string]any:
+		return "object"
+	default:
+		return fmt.Sprintf("%T", value)
+	}
+}
+
+func jsonSample(value any) string {
+	switch typed := value.(type) {
+	case string:
+		return truncateUTF8(typed, 40)
+	case float64:
+		return strconv.FormatFloat(typed, 'f', -1, 64)
+	case bool:
+		return strconv.FormatBool(typed)
+	case nil:
+		return ""
+	default:
+		data, err := json.Marshal(value)
+		if err != nil {
+			return ""
+		}
+		return truncateUTF8(string(data), 40)
 	}
 }
 
