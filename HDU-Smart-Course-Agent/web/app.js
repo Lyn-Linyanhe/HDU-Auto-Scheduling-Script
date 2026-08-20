@@ -33,6 +33,7 @@ const state = {
   lastRefreshAt: '',
   nextRefreshAt: '',
   refreshFailureAt: '',
+  liveRefreshFailureStreak: 0,
   refreshError: '',
   liveImportFailureAt: '',
   liveImportError: '',
@@ -827,7 +828,10 @@ function renderRefreshControls() {
   setTimeElement(els.nextRefreshAt, state.autoRefresh ? state.nextRefreshAt : '', state.autoRefresh ? '未计划' : '已关闭');
   if (state.refreshError) {
     els.liveRefreshError.hidden = false;
-    els.liveRefreshError.textContent = `最近一次刷新失败（${formatTimestamp(state.refreshFailureAt)}）：${state.refreshError} 已保留上次成功课表。`;
+    const streakText = state.liveRefreshFailureStreak > 1
+      ? `连续失败 ${state.liveRefreshFailureStreak} 次，下次约 ${Math.round(effectiveLiveRefreshWait())} 秒后重试。`
+      : '';
+    els.liveRefreshError.textContent = `最近一次刷新失败（${formatTimestamp(state.refreshFailureAt)}）：${state.refreshError} 已保留上次成功课表。${streakText}`;
   } else if (state.liveImportError) {
     els.liveRefreshError.hidden = false;
     els.liveRefreshError.textContent = `最近一次手动导入失败（${formatTimestamp(state.liveImportFailureAt)}）：${state.liveImportError} 已保留上次成功课表。`;
@@ -1259,15 +1263,29 @@ function scheduleLiveRefresh() {
     renderRefreshControls();
     return;
   }
-  const reference = latestRefreshTimestamp();
-  const referenceTime = reference ? Date.parse(reference) : Date.now();
-  const dueAt = referenceTime + state.refreshIntervalSeconds * 1000;
+  const effectiveWait = effectiveLiveRefreshWait();
+  const referenceTime = (state.liveRefreshFailureStreak || 0) > 0
+    ? Date.now()
+    : (() => {
+        const reference = latestRefreshTimestamp();
+        return reference ? Date.parse(reference) : Date.now();
+      })();
+  const dueAt = referenceTime + effectiveWait * 1000;
   state.nextRefreshAt = new Date(dueAt).toISOString();
   state.liveRefreshTimer = setTimeout(() => {
     state.liveRefreshTimer = null;
     refreshLiveSchedule({ reason: 'auto' }).catch(() => {});
   }, Math.max(1000, dueAt - Date.now()));
   renderRefreshControls();
+}
+
+function effectiveLiveRefreshWait() {
+  const base = state.refreshIntervalSeconds || 60;
+  const streak = state.liveRefreshFailureStreak || 0;
+  if (typeof window.HDUExponentialBackoff?.liveRefreshWaitingSeconds === 'function') {
+    return window.HDUExponentialBackoff.liveRefreshWaitingSeconds(base, streak, 7200);
+  }
+  return base;
 }
 
 async function maybeStartAutoRefresh() {
@@ -1307,6 +1325,7 @@ async function refreshLiveSchedule({ reason = 'manual' } = {}) {
       state.refreshError = '';
       state.liveImportFailureAt = '';
       state.liveImportError = '';
+      state.liveRefreshFailureStreak = 0;
       const nextSignature = liveScheduleSignature(state.liveItems, state.liveSchedule);
       if (hadPlanArtifacts && previousSignature !== nextSignature) resetPlanState();
       renderStatus();
@@ -1323,6 +1342,7 @@ async function refreshLiveSchedule({ reason = 'manual' } = {}) {
     } catch (error) {
       state.refreshFailureAt = attemptAt;
       state.refreshError = String(error.message || error);
+      state.liveRefreshFailureStreak = Math.min((state.liveRefreshFailureStreak || 0) + 1, 12);
       if (error.payload?.status) state.status = error.payload.status;
       renderStatus();
       renderCurrent();
@@ -1591,6 +1611,7 @@ async function readLiveFile(file) {
   state.refreshError = '';
   state.liveImportFailureAt = '';
   state.liveImportError = '';
+  state.liveRefreshFailureStreak = 0;
   const nextSignature = liveScheduleSignature(state.liveItems, state.liveSchedule);
   if (hadPlanArtifacts && previousSignature !== nextSignature) resetPlanState();
   renderStatus();

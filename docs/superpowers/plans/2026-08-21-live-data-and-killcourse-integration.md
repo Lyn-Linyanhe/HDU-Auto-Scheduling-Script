@@ -214,5 +214,12 @@
    pending），前端 1.5s 轮询即可看到“选课中/成功/失败”实时变化；任务结束才落盘
    完整 `execution-log.json`。测试：事件顺序（running→success）、/status 执行中
    返回 in-flight 日志。
-4. **待办（仍属 P4）**：前端/主站自动刷新在失败时的指数退避（个人课表刷新路径）、
-   接口响应 shape 变更诊断的自动化回归。这些不依赖真实会话，可离线继续实现。
+4. **个人课表自动刷新失败指数退避（已实现）**：新增 `web/backoff.js` 纯函数
+   `liveRefreshWaitingSeconds(base, streak, cap)`（指数翻倍、封顶 7200s、用户基值
+   超上限尊重用户值）；`app.js` 在自动刷新失败时连续失败计数 +1（成功/重新加载归零），
+   下次调度改用退避间隔并在失败行提示“连续失败 N 次，下次约 … 秒后重试”。
+   修复了此前失败后按 `max(1s)` 立即重试的潜在打爆隐患。验收：
+   `scripts/smart-agent-backoff-check.js`（8 组数值）已接入 `testlab-acceptance.ps1`；
+   UI smoke（桌面/390px）通过。
+5. **待办（仍属 P4）**：接口响应 shape 变更诊断的自动化回归。不依赖真实会话，
+   可离线继续实现。

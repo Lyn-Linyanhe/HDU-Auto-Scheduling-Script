@@ -209,6 +209,10 @@ try {
   node scripts\smart-agent-refresh-contract-test.js
   if ($LASTEXITCODE -ne 0) { throw "Smart Agent refresh contract failed." }
 
+  Write-Step "Checking Smart Agent refresh backoff helper..."
+  node scripts\smart-agent-backoff-check.js
+  if ($LASTEXITCODE -ne 0) { throw "Smart Agent refresh backoff check failed." }
+
   Remove-Item Env:HDU_COURSE_FIXTURE -ErrorAction SilentlyContinue
   Remove-Item Env:HDU_MAIN_EXE -ErrorAction SilentlyContinue
   Remove-Item Env:HDU_SMART_AGENT_EXE -ErrorAction SilentlyContinue
