@@ -37,6 +37,16 @@ type Client struct {
 }
 
 // NewClient 创建一个新的客户端
+// BaseJWURL and BaseSSOURL are the teaching-system endpoints. They are
+// package variables so tests and local mocks can point them at an httptest
+// server. Production values match upstream HDU endpoints.
+var (
+	BaseJWURL  = "https://newjw.hdu.edu.cn/jwglxt"
+	BaseSSOURL = "https://sso.hdu.edu.cn"
+	// ServiceURL is the CAS service parameter used after SSO login.
+	ServiceURL = "http://newjw.hdu.edu.cn/sso/driot4login"
+)
+
 func NewClient(cfg *config.Config) *Client {
 	// 创建一个cookie jar
 	jar, _ := cookiejar.New(nil)
@@ -49,6 +59,14 @@ func NewClient(cfg *config.Config) *Client {
 			Jar: jar,
 		},
 		UserAgent: userAgent,
+	}
+}
+
+// SetHTTPClient replaces the underlying HTTP client (used by tests to
+// inject a transport pointed at a local mock teaching system).
+func (c *Client) SetHTTPClient(hc *http.Client) {
+	if hc != nil {
+		c.client = hc
 	}
 }
 
@@ -126,7 +144,7 @@ func (c *Client) Post(url string, formData string, headers map[string]string) ([
 
 // SaveCookies 保存cookies
 func (c *Client) SaveCookies(cfg *config.Config) error {
-	urlStr := "https://newjw.hdu.edu.cn/jwglxt"
+	urlStr := BaseJWURL
 	parsedURL, err := url.Parse(urlStr)
 	if err != nil {
 		return err
@@ -151,7 +169,7 @@ func (c *Client) SaveCookies(cfg *config.Config) error {
 
 // LoadCookies 加载cookies
 func (c *Client) LoadCookies(cfg *config.Config) error {
-	urlStr := "https://newjw.hdu.edu.cn/jwglxt"
+	urlStr := BaseJWURL
 	parsedURL, err := url.Parse(urlStr)
 	if err != nil {
 		return err

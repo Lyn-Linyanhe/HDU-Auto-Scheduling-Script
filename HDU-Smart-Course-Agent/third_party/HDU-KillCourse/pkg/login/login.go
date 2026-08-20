@@ -45,7 +45,7 @@ func NewjwLogin(c *client.Client, cfg *config.Config) error {
 	}
 
 	// 判断是否登录成功
-	if strings.Contains(result, "用户名或密码不正确，请重新输入") {
+	if strings.Contains(result, "用户名或密码不正确，请重新输入") || strings.Contains(result, "用户名或密码错误") {
 		return errors.New("用户名或密码不正确！")
 	}
 

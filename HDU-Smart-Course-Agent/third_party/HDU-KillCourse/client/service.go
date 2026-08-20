@@ -15,7 +15,7 @@ import (
 
 // GetCsrftoken 获取csrftoken
 func (c *Client) GetCsrftoken() (string, error) {
-	login_url := "https://newjw.hdu.edu.cn/jwglxt/xtgl/login_slogin.html"
+	login_url := BaseJWURL + "/xtgl/login_slogin.html"
 
 	// 获取csrftoken
 	result, _, err := c.Get(login_url, nil)
@@ -40,7 +40,7 @@ func (c *Client) GetCsrftoken() (string, error) {
 
 // GetCasLoginConfig 获取cas登录配置
 func (c *Client) GetCasLoginConfig() (execution string, croypto string, err error) {
-	result, _, err := c.Get("https://sso.hdu.edu.cn/login", nil)
+	result, _, err := c.Get(BaseSSOURL+"/login", nil)
 	if err != nil {
 		return "", "", err
 	}
@@ -71,7 +71,7 @@ func (c *Client) GetCasLoginConfig() (execution string, croypto string, err erro
 
 // GetQrLoginId 获取二维码登录ID
 func (c *Client) GetQrLoginId() (*QrLoginIdResp, error) {
-	url := "https://sso.hdu.edu.cn/api/protected/qrlogin/loginid"
+	url := BaseSSOURL + "/api/protected/qrlogin/loginid"
 	// 设置请求头
 	CsrfKey := util.GenerateRandomString(32)
 	CsrfValue := util.GenerateCsrfValue(CsrfKey)
@@ -96,7 +96,7 @@ func (c *Client) GetQrLoginId() (*QrLoginIdResp, error) {
 
 // GetLoginQr 获取二维码
 func (c *Client) GetQrCode(id string) ([]byte, error) {
-	url := fmt.Sprintf("https://sso.hdu.edu.cn/api/public/qrlogin/qrgen/%s/dingDingQr", id)
+	url := fmt.Sprintf(BaseSSOURL+"/api/public/qrlogin/qrgen/%s/dingDingQr", id)
 	// 获取二维码
 	result, _, err := c.Get(url, nil)
 	if err != nil {
@@ -108,7 +108,7 @@ func (c *Client) GetQrCode(id string) ([]byte, error) {
 
 // GetQrLoginStatus 获取二维码登录状态
 func (c *Client) GetQrLoginStatus(id string) (*QrLoginStatusResp, error) {
-	url := fmt.Sprintf("https://sso.hdu.edu.cn/api/protected/qrlogin/scan/%s", id)
+	url := fmt.Sprintf(BaseSSOURL+"/api/protected/qrlogin/scan/%s", id)
 	// 设置请求头
 	CsrfKey := util.GenerateRandomString(32)
 	CsrfValue := util.GenerateCsrfValue(CsrfKey)
@@ -133,7 +133,7 @@ func (c *Client) GetQrLoginStatus(id string) (*QrLoginStatusResp, error) {
 
 // CasLoginPost cas登录请求
 func (c *Client) CasLoginPost(req *CasLoginReq) (string, error) {
-	login_url := "https://sso.hdu.edu.cn/login"
+	login_url := BaseSSOURL + "/login"
 	// 登录
 	formData := req.ToFormData()
 	result, _, err := c.Post(login_url, formData.Encode(), nil)
@@ -146,7 +146,7 @@ func (c *Client) CasLoginPost(req *CasLoginReq) (string, error) {
 
 // CasLoginNewjw cas登录newjw
 func (c *Client) CasLoginNewjw() (string, error) {
-	new_jw := "https://sso.hdu.edu.cn/login?service=http://newjw.hdu.edu.cn/sso/driot4login"
+	new_jw := BaseSSOURL + "/login?service=" + ServiceURL
 	// 通过cas登录newjw
 	result, _, err := c.Get(new_jw, nil)
 	if err != nil {
@@ -158,7 +158,7 @@ func (c *Client) CasLoginNewjw() (string, error) {
 
 // GetPublicKey 获取公钥
 func (c *Client) GetPublicKey() (*GetPublicKeyResp, error) {
-	result, _, err := c.Get(fmt.Sprintf("https://newjw.hdu.edu.cn/jwglxt/xtgl/login_getPublicKey.html?time=%d", time.Now().Unix()), nil)
+	result, _, err := c.Get(fmt.Sprintf(BaseJWURL+"/xtgl/login_getPublicKey.html?time=%d", time.Now().Unix()), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -174,7 +174,7 @@ func (c *Client) GetPublicKey() (*GetPublicKeyResp, error) {
 
 // NewjwLoginPost Newjw登录请求
 func (c *Client) NewjwLoginPost(req *LoginReq) (string, error) {
-	login_url := "https://newjw.hdu.edu.cn/jwglxt/xtgl/login_slogin.html"
+	login_url := BaseJWURL + "/xtgl/login_slogin.html"
 	// 登录
 	formData := req.ToFormData()
 	result, _, err := c.Post(login_url, formData.Encode(), nil)
@@ -187,7 +187,7 @@ func (c *Client) NewjwLoginPost(req *LoginReq) (string, error) {
 
 // GetCourse 获取课程
 func (c *Client) GetCourse(req *GetCourseReq) (*GetCourseResp, *GetCourseToExcelResp, error) {
-	course_url := "https://newjw.hdu.edu.cn/jwglxt/rwlscx/rwlscx_cxRwlsIndex.html?doType=query&gnmkdm=N1548"
+	course_url := BaseJWURL + "/rwlscx/rwlscx_cxRwlsIndex.html?doType=query&gnmkdm=N1548"
 	// 获取课程
 	formData := req.ToFormData()
 	result, _, err := c.Post(course_url, formData.Encode(), nil)
@@ -313,7 +313,7 @@ func (c *Client) GetClientBodyConfig() error {
 		return nil
 	}
 
-	url := "https://newjw.hdu.edu.cn/jwglxt/xsxk/zzxkyzb_cxZzxkYzbIndex.html?gnmkdm=N253512&layout=default"
+	url := BaseJWURL + "/xsxk/zzxkyzb_cxZzxkYzbIndex.html?gnmkdm=N253512&layout=default"
 	// 获取选课配置
 	result, _, err := c.Get(url, nil)
 	if err != nil {
@@ -341,7 +341,7 @@ func (c *Client) GetClientBodyConfig() error {
 
 // GetDoJxbId 获取do_jxb_id
 func (c *Client) GetDoJxbId(req *GetDoJxbIdReq) ([]GetDoJxbIdResp, error) {
-	url := "https://newjw.hdu.edu.cn/jwglxt/xsxk/zzxkyzbjk_cxJxbWithKchZzxkYzb.html?gnmkdm=N253512"
+	url := BaseJWURL + "/xsxk/zzxkyzbjk_cxJxbWithKchZzxkYzb.html?gnmkdm=N253512"
 	// 获取do_jxb_id
 	formData := req.ToFormData()
 	result, _, err := c.Post(url, formData.Encode(), nil)
@@ -363,7 +363,7 @@ func (c *Client) GetDoJxbId(req *GetDoJxbIdReq) ([]GetDoJxbIdResp, error) {
 
 // SelectCourse 选课
 func (c *Client) SelectCourse(req *SelectCourseReq) (*SelectCourseResq, error) {
-	url := "https://newjw.hdu.edu.cn/jwglxt/xsxk/zzxkyzbjk_xkBcZyZzxkYzb.html?gnmkdm=N253512"
+	url := BaseJWURL + "/xsxk/zzxkyzbjk_xkBcZyZzxkYzb.html?gnmkdm=N253512"
 	// 选课
 	formData := req.ToFormData()
 	result, _, err := c.Post(url, formData.Encode(), nil)
@@ -385,7 +385,7 @@ func (c *Client) SelectCourse(req *SelectCourseReq) (*SelectCourseResq, error) {
 
 // CancelCourse 退课
 func (c *Client) CancelCourse(req *CancelCourseReq) (string, error) {
-	url := "https://newjw.hdu.edu.cn/jwglxt/xsxk/zzxkyzb_tuikBcZzxkYzb.html?gnmkdm=N253512"
+	url := BaseJWURL + "/xsxk/zzxkyzb_tuikBcZzxkYzb.html?gnmkdm=N253512"
 	// 退课
 	formData := req.ToFormData()
 	result, _, err := c.Post(url, formData.Encode(), nil)
@@ -401,7 +401,7 @@ func (c *Client) CancelCourse(req *CancelCourseReq) (string, error) {
 
 // SearchCourse 搜索课程
 func (c *Client) SearchCourse(req *SearchCourseReq) (*SearchCourseResp, error) {
-	url := "https://newjw.hdu.edu.cn/jwglxt/xsxk/zzxkyzb_cxZzxkYzbPartDisplay.html?gnmkdm=N253512"
+	url := BaseJWURL + "/xsxk/zzxkyzb_cxZzxkYzbPartDisplay.html?gnmkdm=N253512"
 	// 搜索课程
 	formData := req.ToFormData()
 	result, _, err := c.Post(url, formData.Encode(), nil)
@@ -441,7 +441,7 @@ func (c *Client) GetReleases() (*GetReleasesResp, error) {
 
 func (c *Client) GetStuInfo() error {
 	// 课表
-	url := "https://newjw.hdu.edu.cn/jwglxt/kbcx/xskbcx_cxXsgrkb.html?gnmkdm=N2151&xnm=2022&xqm=3"
+	url := BaseJWURL + "/kbcx/xskbcx_cxXsgrkb.html?gnmkdm=N2151&xnm=2022&xqm=3"
 	result, _, err := c.Get(url, nil)
 	if err != nil {
 		return err
@@ -461,7 +461,7 @@ func (c *Client) GetStuInfo() error {
 }
 
 func (c *Client) GetZyhIdByBh(id string) (string, error) {
-	url := fmt.Sprintf("https://newjw.hdu.edu.cn/jwglxt/xtgl/comm_cxBjdmList.html?&bh=%s", id)
+	url := fmt.Sprintf(BaseJWURL+"/xtgl/comm_cxBjdmList.html?&bh=%s", id)
 	result, _, err := c.Get(url, nil)
 	if err != nil {
 		return "", err

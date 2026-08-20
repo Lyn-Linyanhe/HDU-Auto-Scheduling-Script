@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"strings"
 	"time"
@@ -97,13 +98,16 @@ func SelectCourse(c *client.Client, JxbIds string, KchId string, Kklxdm string, 
 
 	if result.Flag == "1" {
 		log.Info("选课成功")
+		return nil
 	} else if result.Flag == "0" {
-		log.Error("选课失败: ", result.Msg)
+		err := fmt.Errorf("选课失败: %s", result.Msg)
+		log.Error(err)
+		return err
 	} else {
-		log.Error("选课失败: 人数可能已满", result)
+		err := fmt.Errorf("选课失败: 人数可能已满 %v", result)
+		log.Error(err)
+		return err
 	}
-
-	return nil
 }
 
 // CancelCourse 退课
@@ -124,15 +128,19 @@ func CancelCourse(c *client.Client, JxbIds string, KchId string, XueNian string,
 
 	if result == "\"1\"" {
 		log.Info("退课成功(可能？)")
+		return nil
 	} else {
-		log.Error("退课失败：", result)
+		err := fmt.Errorf("退课失败：%s", result)
+		log.Error(err)
+		return err
 	}
-
-	return nil
 }
 
 // HandleCourse 处理课程
 func HandleCourse(c *client.Client, cfg *config.Config, course *client.GetCourseResp, CourseName string, SelectFlag interface{}) error {
+	if c == nil || c.ClientBodyConfig == nil {
+		return errors.New("客户端选课配置未初始化（ClientBodyConfig 为空）")
+	}
 	if course == nil || len(course.Items) == 0 {
 		return errors.New("教学班名称: " + CourseName + " 不存在")
 	}
