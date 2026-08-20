@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	kcclient "github.com/cr4n5/HDU-KillCourse/client"
@@ -49,6 +50,59 @@ func newMockTeachingServer(t *testing.T, selectBody string) *httptest.Server {
 		case r.URL.Path == "/xsxk/zzxkyzb_cxZzxkYzbPartDisplay.html":
 			w.Header().Set("Content-Type", "application/json")
 			w.Write([]byte(`{"tmpList":[{"jxbmc":"(2026-2027-1)-A0001001-01"}]}`))
+		case r.URL.Path == "/xsxk/zzxkyzb_tuikBcZzxkYzb.html":
+			w.Write([]byte(`"1"`))
+		default:
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+}
+
+func newReloginMockServer(t *testing.T, selectBodies []string, loginCount *int32, partDisplayBodies []string) *httptest.Server {
+	t.Helper()
+	key, err := rsa.GenerateKey(rand.Reader, 1024)
+	if err != nil {
+		t.Fatalf("generate rsa key: %v", err)
+	}
+	modulus := base64.StdEncoding.EncodeToString(key.N.Bytes())
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/xtgl/login_slogin.html" && r.Method == http.MethodGet:
+			w.Write([]byte(`<input name="csrftoken" value="test-csrf">`))
+		case r.URL.Path == "/xtgl/login_getPublicKey.html":
+			w.Header().Set("Content-Type", "application/json")
+			w.Write([]byte(`{"modulus":"` + modulus + `","exponent":"10001"}`))
+		case r.URL.Path == "/xtgl/login_slogin.html" && r.Method == http.MethodPost:
+			if loginCount != nil {
+				atomic.AddInt32(loginCount, 1)
+			}
+			http.SetCookie(w, &http.Cookie{Name: "JSESSIONID", Value: "mock-session", Path: "/"})
+			http.SetCookie(w, &http.Cookie{Name: "route", Value: "mock-route", Path: "/"})
+			w.Write([]byte("login ok"))
+		case r.URL.Path == "/kbcx/xskbcx_cxXsgrkb.html":
+			w.Header().Set("Content-Type", "application/json")
+			w.Write([]byte(`{"xsxx":{"NJDM_ID":"2026","ZYH_ID":"zyh-2026"}}`))
+		case r.URL.Path == "/xsxk/zzxkyzb_cxZzxkYzbIndex.html":
+			w.Write([]byte(`<input name="ccdm" value="ccdm-1"><input name="bh_id" value="2026"><input name="jg_id_1" value="jg-1"><input name="xsbj" value="xsbj-1"><input name="xz" value="4"><input name="mzm" value="mzm-1"><input name="xslbdm" value="xslbdm-1"><input name="xbm" value="xbm-1"><input name="zyfx_id" value="zyfx-1"><input name="xqh_id" value="xqh-1"><a role="tab" onclick="queryCourse(this,'01','xkkz01')">主修</a><a role="tab" onclick="queryCourse(this,'10','xkkz10')">通识选修</a>`))
+		case r.URL.Path == "/xsxk/zzxkyzbjk_cxJxbWithKchZzxkYzb.html":
+			w.Header().Set("Content-Type", "application/json")
+			w.Write([]byte(`[{"jxb_id":"kill-jxb-01","do_jxb_id":"do-kill-jxb-01"}]`))
+		case r.URL.Path == "/xsxk/zzxkyzbjk_xkBcZyZzxkYzb.html":
+			body := selectBodies[0]
+			if len(selectBodies) > 1 {
+				selectBodies = selectBodies[1:]
+			}
+			w.Header().Set("Content-Type", "application/json")
+			w.Write([]byte(body))
+		case r.URL.Path == "/xsxk/zzxkyzb_cxZzxkYzbPartDisplay.html":
+			body := `{"tmpList":[{"jxbmc":"(2026-2027-1)-A0001001-01"}]}`
+			if len(partDisplayBodies) > 0 {
+				body = partDisplayBodies[0]
+				partDisplayBodies = partDisplayBodies[1:]
+			}
+			w.Header().Set("Content-Type", "application/json")
+			w.Write([]byte(body))
 		case r.URL.Path == "/xsxk/zzxkyzb_tuikBcZzxkYzb.html":
 			w.Write([]byte(`"1"`))
 		default:
@@ -162,5 +216,56 @@ func TestStartWaitSelectSuccess(t *testing.T) {
 	}
 	if len(events) != 1 || events[0].Status != "success" || events[0].Action != "select" {
 		t.Fatalf("unexpected events: %+v", events)
+	}
+}
+
+func TestRunOnceReloginOnLoginExpired(t *testing.T) {
+	var loginCount int32
+	server := newReloginMockServer(t, []string{"统一身份认证", `{"flag":"1","msg":"选课成功"}`}, &loginCount, nil)
+	defer server.Close()
+	ex := setupExecutor(t, server, "")
+	events, err := ex.RunOnce(context.Background(), map[string]string{"(2026-2027-1)-A0001001-01": "1"})
+	if err != nil {
+		t.Fatalf("RunOnce error: %v", err)
+	}
+	if len(events) != 1 || events[0].Status != "success" {
+		t.Fatalf("expected success after re-login, got %+v", events)
+	}
+	if got := atomic.LoadInt32(&loginCount); got < 2 {
+		t.Fatalf("expected at least 2 logins (initial + re-login), got %d", got)
+	}
+}
+
+func TestRunOnceReloginStillFails(t *testing.T) {
+	var loginCount int32
+	server := newReloginMockServer(t, []string{"统一身份认证", "统一身份认证"}, &loginCount, nil)
+	defer server.Close()
+	ex := setupExecutor(t, server, "")
+	events, err := ex.RunOnce(context.Background(), map[string]string{"(2026-2027-1)-A0001001-01": "1"})
+	if err != nil {
+		t.Fatalf("RunOnce error: %v", err)
+	}
+	if len(events) != 1 || events[0].Status != "failed" || !strings.Contains(events[0].Message, "登录过期") {
+		t.Fatalf("expected persistent login-expired failure, got %+v", events)
+	}
+	if got := atomic.LoadInt32(&loginCount); got < 2 {
+		t.Fatalf("expected re-login attempt, got %d logins", got)
+	}
+}
+
+func TestStartWaitReloginOnPartDisplayExpired(t *testing.T) {
+	var loginCount int32
+	server := newReloginMockServer(t, []string{`{"flag":"1","msg":"选课成功"}`}, &loginCount, []string{"统一身份认证"})
+	defer server.Close()
+	ex := setupExecutor(t, server, "")
+	events, err := ex.StartWait(context.Background(), map[string]string{"(2026-2027-1)-A0001001-01": "1"}, 1, make(chan struct{}))
+	if err != nil {
+		t.Fatalf("StartWait error: %v", err)
+	}
+	if len(events) != 1 || events[0].Status != "success" || events[0].Action != "select" {
+		t.Fatalf("expected select success after re-login, got %+v", events)
+	}
+	if got := atomic.LoadInt32(&loginCount); got < 2 {
+		t.Fatalf("expected at least 2 logins (initial + re-login), got %d", got)
 	}
 }

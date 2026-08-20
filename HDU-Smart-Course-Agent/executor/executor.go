@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -107,7 +108,7 @@ func (e *Executor) RunOnce(ctx context.Context, plan map[string]string) ([]Execu
 			continue
 		}
 
-		err := kcourse.HandleCourse(e.client, e.cfg, e.course, courseCode, flag)
+		err := e.execCourseAction(courseCode, flag)
 		ev.FinishedAt = time.Now().Format(time.RFC3339)
 		if err != nil {
 			ev.Status = "failed"
@@ -179,6 +180,13 @@ func (e *Executor) StartWait(ctx context.Context, plan map[string]string, interv
 		for code := range remaining {
 			ok, err := kcourse.GetIsCourseOk(e.client, e.cfg, e.course, code)
 			if err != nil {
+				if isLoginExpiredError(err) {
+					if reloginErr := e.relogin(); reloginErr == nil {
+						// Session was stale; try again on the next poll instead
+						// of failing the course.
+						continue
+					}
+				}
 				ev := ExecutionEvent{
 					CourseCode: code,
 					Action:     "wait",
@@ -202,7 +210,7 @@ func (e *Executor) StartWait(ctx context.Context, plan map[string]string, interv
 				Message:    "检测到余量，开始选课",
 				StartedAt:  time.Now().Format(time.RFC3339),
 			}
-			if err := kcourse.HandleCourse(e.client, e.cfg, e.course, code, "1"); err != nil {
+			if err := e.execCourseAction(code, "1"); err != nil {
 				ev.Status = "failed"
 				ev.Message = "选课失败: " + err.Error()
 			} else {
@@ -215,6 +223,49 @@ func (e *Executor) StartWait(ctx context.Context, plan map[string]string, interv
 		}
 	}
 	return events, nil
+}
+
+// execCourseAction runs one select/drop action. If the teaching system reports
+// a stale session ("可能登录过期"/"统一身份认证"), the executor re-logs-in once
+// and retries the same action so a single mid-session expiry does not fail the
+// whole run.
+func (e *Executor) execCourseAction(courseCode, flag string) error {
+	err := kcourse.HandleCourse(e.client, e.cfg, e.course, courseCode, flag)
+	if err != nil && isLoginExpiredError(err) {
+		if reloginErr := e.relogin(); reloginErr != nil {
+			return reloginErr
+		}
+		err = kcourse.HandleCourse(e.client, e.cfg, e.course, courseCode, flag)
+	}
+	return err
+}
+
+func isLoginExpiredError(err error) bool {
+	if err == nil {
+		return false
+	}
+	text := err.Error()
+	return strings.Contains(text, "可能登录过期") || strings.Contains(text, "统一身份认证") || strings.Contains(text, "登录过期")
+}
+
+func (e *Executor) relogin() error {
+	// The selection config (ccdm/xkkz/bh_id...) is student-specific and does
+	// not change when the session expires, so carry it over to the new client.
+	bodyConfig := e.client.ClientBodyConfig
+	cli, err := klogin.LoginSave(e.cfg, false)
+	if err != nil {
+		return fmt.Errorf("重新登录失败: %w", err)
+	}
+	cli.ClientBodyConfig = bodyConfig
+	e.client = cli
+	xqm, xqmErr := termXqm(e.cfg.Time.XueQi)
+	if xqmErr != nil {
+		return xqmErr
+	}
+	if err := cli.GetStuInfoForTerm(e.cfg.Time.XueNian, xqm); err != nil {
+		return fmt.Errorf("重新登录后获取学生信息失败: %w", err)
+	}
+	return nil
 }
 
 func (e *Executor) ensureClientBodyConfig() error {
