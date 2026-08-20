@@ -1,0 +1,43 @@
+{
+    "cas_login": {
+        "username": "2201xxxx",
+        "password": "xxxxxxxx",
+        "dingDingQrLoginEnabled": "0",
+        "level": "0"
+    },
+    "newjw_login": {
+        "username": "2201xxxx",
+        "password": "xxxxxxxx",
+        "level": "1"
+    },
+    "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36 Edg/149.0.0.0",
+    "cookies": {
+        "JSESSIONID": "",
+        "route": "",
+        "enabled": "1"
+    },
+    "time": {
+        "XueNian": "2024",
+        "XueQi": "1"
+    },
+    "course": {
+        "(2024-2025-1)-C2092011-01" : "1",
+        "(2024-2025-1)-T1300019-04" : "1",
+        "(2024-2025-1)-T1300019-05" : "1",
+        "(2024-2025-1)-B2700380-02" : "0",
+        "(2024-2025-1)-C2892008-02" : "1",
+        "(2024-2025-1)-W0001321-06" : "0"
+    },
+    "wait_course": {
+        "interval": 60,
+        "enabled": "0"
+    },
+    "smtp_email": {
+        "host": "smtp.qq.com",
+        "username": "...@qq.com",
+        "password": "xxxxxxxx",
+        "to": "...@qq.com",
+        "enabled": "0"
+    },
+    "start_time": "2024-07-25 12:00:00"
+}

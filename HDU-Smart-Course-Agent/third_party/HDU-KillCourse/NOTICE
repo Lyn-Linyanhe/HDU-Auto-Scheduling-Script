@@ -1,0 +1,20 @@
+HDU-KillCourse (vendored)
+========================
+
+Source: https://github.com/cr4n5/HDU-KillCourse (Apache License 2.0)
+Vendored from: local checkout of cr4n5/HDU-KillCourse, v1.4.9 era (2026-07-05)
+License: see LICENSE in this directory.
+
+This copy is integrated into HDU-Smart-Course-Agent as a Go module via
+`replace github.com/cr4n5/HDU-KillCourse => ./third_party/HDU-KillCourse`.
+
+Local modifications (relative to upstream):
+- client/client.go: added BaseJWURL / BaseSSOURL package variables and
+  Client.SetHTTPClient so the HTTP client and endpoints can be injected
+  for tests and local mocks.
+- client/service.go: hard-coded endpoint URLs now use BaseJWURL/BaseSSOURL.
+- pkg/course/killCourse.go: SelectCourse/CancelCourse now return an error
+  when the school reports failure (upstream only logged it); HandleCourse
+  guards against a nil ClientBodyConfig instead of panicking.
+- pkg/login/login.go: new-JW login failure detection aligned with the
+  school's error message.
