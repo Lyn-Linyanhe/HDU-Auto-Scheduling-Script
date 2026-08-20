@@ -109,13 +109,26 @@ $Manifest = [ordered]@{
 
 $Manifest | ConvertTo-Json -Depth 4 | Set-Content -Path (Join-Path $PackageDir "manifest.json") -Encoding UTF8
 
+# Generate SHA256SUMS.txt for every packaged file (relative forward-slash paths,
+# sorted). The checksum file itself is intentionally not hashed.
+$PackagedFiles = Get-ChildItem -LiteralPath $PackageDir -Recurse -File | Sort-Object FullName
+$ChecksumLines = foreach ($file in $PackagedFiles) {
+  $relative = $file.FullName.Substring($PackageDir.Length + 1).Replace('\', '/')
+  $hash = (Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash.ToLower()
+  "$hash  $relative"
+}
+$ChecksumLines | Set-Content -Path (Join-Path $PackageDir "SHA256SUMS.txt") -Encoding ASCII
+
 if (-not $NoZip) {
   $ZipPath = Join-Path $ReleaseRoot "$PackageName.zip"
   if (Test-Path -LiteralPath $ZipPath) {
     Remove-Item -LiteralPath $ZipPath -Force
   }
   Compress-Archive -Path (Join-Path $PackageDir "*") -DestinationPath $ZipPath
+  $ZipHash = (Get-FileHash -LiteralPath $ZipPath -Algorithm SHA256).Hash.ToLower()
+  "$ZipHash  $($PackageName).zip" | Set-Content -Path (Join-Path $ReleaseRoot "$($PackageName).zip.sha256") -Encoding ASCII
   Write-Host "Release package created: $ZipPath"
+  Write-Host "Zip checksum written: $($ZipPath).sha256"
 }
 
 Write-Host "Release directory created: $PackageDir"
