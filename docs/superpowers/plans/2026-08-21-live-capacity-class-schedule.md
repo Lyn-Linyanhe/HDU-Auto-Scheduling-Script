@@ -4,6 +4,16 @@
 > 登录会话、testlab mock 与诊断工具；P2 需要一次真实会话抓包确认字段，P3
 > 本身可先基于已有的 `course.json`（含 `jxbzc` 授课班级）落地，不需要新接口。
 
+## 依赖与等待说明（2026-08-21 更新）
+
+- **P2 真实抓包步骤处于“等待选课期”状态**：余量接口在非选课期通常返回
+  “当前不属于选课阶段”或类似响应，抓不到有效字段。当前（2026-08-21）不在选课期，
+  因此在真实选课期到来、且存在有效登录会话前，此步骤挂起。
+- 抓包工具本身已就绪（`POST /api/course/live-capacity/capture`，见 §P2 步骤 1 的
+  “工具已就绪”注），届时只需点击一次并回填附录 A。
+- 在等待期间可执行的是**方案 B（通用字段先行，需用户授权后开工）**，它不依赖
+  真实抓包即可把 P2 的契约/API/前端/mock/test 全部搭好，唯一待改点收敛到映射表。
+
 ## 现状（2026-08-21，来自当前工作区证据）
 
 - Smart Agent 已有 `/api/course-capacity`：读取**本地快照**（`course.json` 导出的
@@ -91,6 +101,25 @@
 - 验收：新增 `scripts/smart-agent-class-schedule-check.js`（`/api/class-options` 计数、
   `className=202601` 2 门 / `202602` 1 门），已接入 `testlab-acceptance.ps1`；桌面与
   390px 移动 UI smoke 均通过、无横向溢出。
+
+## 方案 B：通用字段先行（等待用户授权后开工）
+
+目标：不依赖真实抓包，先把 P2 的“实时人数/余量”展示能力按**规范化契约**搭好，
+把“学校真实字段未知”这件事收敛到一层很小的映射表，真实抓包后只改映射。
+
+1. **规范契约**：`live-capacity.json` 每条记录输出
+   `{ displayCode, courseName, capacity, enrolled, selected, remaining, source, observedAt }`。
+2. **映射层（唯一假设点）**：`mapCapacityRow(raw) → canonical`，按“候选键名表”
+   依序自动探测（先放正方常见命名候选：`rl`=容量、`xkrs`=选课人数、`skrs`=授课人数，
+   以及可能的显式余量字段）。单测覆盖多种候选形状。
+3. **API**：`/api/course/live-capacity` 读快照，失败回退旧 `course.json` 容量快照并
+   标记“实时/快照”与来源时间（复用现有 `/api/course-capacity` 的语义）。
+4. **前端**：容量卡片支持“实时/快照”双来源、失败原因与时间（沿用现有 UI 模式）。
+5. **mock/验收**：testlab 新增 `capacity-ok/fail` 场景；全量 `testlab-acceptance` 通过。
+6. **真实抓包收尾**：若自动探测未命中，仅更新映射表候选键（一处小改动），复跑测试。
+
+> 前置：**需用户明确授权**再开工；方案 B 的字段假设在真实抓包前不构成“可信事实”，
+> 仅用于离线把整条链路做出来。
 
 ## 依赖与风险
 
