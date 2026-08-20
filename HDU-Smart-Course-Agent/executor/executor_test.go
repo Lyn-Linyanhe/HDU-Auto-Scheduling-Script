@@ -313,3 +313,25 @@ func TestStartWaitTransientFailureKeepsWaiting(t *testing.T) {
 		t.Fatalf("course should still be selected after a transient failure, events=%+v", events)
 	}
 }
+
+func TestRunOnceEmitsLiveEvents(t *testing.T) {
+	server := newMockTeachingServer(t, `{"flag":"1","msg":"选课成功"}`)
+	defer server.Close()
+	ex := setupExecutor(t, server, "")
+	var seen []ExecutionEvent
+	ex.SetOnEvent(func(ev ExecutionEvent) { seen = append(seen, ev) })
+
+	events, err := ex.RunOnce(context.Background(), map[string]string{"(2026-2027-1)-A0001001-01": "1"})
+	if err != nil {
+		t.Fatalf("RunOnce error: %v", err)
+	}
+	if len(events) != 1 || events[0].Status != "success" {
+		t.Fatalf("unexpected final events: %+v", events)
+	}
+	if len(seen) < 2 {
+		t.Fatalf("expected running + final live events, got %d: %+v", len(seen), seen)
+	}
+	if seen[0].Status != "running" || seen[len(seen)-1].Status != "success" {
+		t.Fatalf("unexpected live event order: %+v", seen)
+	}
+}

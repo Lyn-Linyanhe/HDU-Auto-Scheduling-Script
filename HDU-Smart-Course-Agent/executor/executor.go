@@ -36,6 +36,23 @@ type Executor struct {
 	cfg    *kcconfig.Config
 	client *kcclient.Client
 	course *kcclient.GetCourseResp
+
+	// OnEvent, when set, receives every produced event (running/progress and
+	// its final outcome) so the embedding application can stream live status.
+	OnEvent func(ExecutionEvent)
+}
+
+// SetOnEvent installs or replaces the live-progress callback.
+func (e *Executor) SetOnEvent(fn func(ExecutionEvent)) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.OnEvent = fn
+}
+
+func (e *Executor) emitEvent(ev ExecutionEvent) {
+	if e.OnEvent != nil {
+		e.OnEvent(ev)
+	}
 }
 
 // New logs in with cfg, refreshes student info for the configured term and
@@ -104,10 +121,12 @@ func (e *Executor) RunOnce(ctx context.Context, plan map[string]string) ([]Execu
 			ev.Status = "failed"
 			ev.Message = "计划动作未知，仅支持 1=选课 / 0=退课"
 			ev.FinishedAt = time.Now().Format(time.RFC3339)
+			e.emitEvent(ev)
 			events = append(events, ev)
 			continue
 		}
 
+		e.emitEvent(ev)
 		err := e.execCourseAction(courseCode, flag)
 		ev.FinishedAt = time.Now().Format(time.RFC3339)
 		if err != nil {
@@ -122,6 +141,7 @@ func (e *Executor) RunOnce(ctx context.Context, plan map[string]string) ([]Execu
 			}
 		}
 		events = append(events, ev)
+		e.emitEvent(ev)
 
 		select {
 		case <-ctx.Done():
@@ -194,14 +214,16 @@ func (e *Executor) StartWait(ctx context.Context, plan map[string]string, interv
 				failedChecks++
 				if !erroredOnce[code] {
 					erroredOnce[code] = true
-					events = append(events, ExecutionEvent{
+					ev := ExecutionEvent{
 						CourseCode: code,
 						Action:     "wait",
 						Status:     "failed",
 						Message:    "查询余量失败: " + err.Error() + "；已保留该课程继续蹲课，轮询将按指数退避。",
 						StartedAt:  time.Now().Format(time.RFC3339),
 						FinishedAt: time.Now().Format(time.RFC3339),
-					})
+					}
+					events = append(events, ev)
+					e.emitEvent(ev)
 				}
 				continue
 			}
@@ -224,6 +246,7 @@ func (e *Executor) StartWait(ctx context.Context, plan map[string]string, interv
 				ev.Message = "蹲课选课成功"
 			}
 			ev.FinishedAt = time.Now().Format(time.RFC3339)
+			e.emitEvent(ev)
 			events = append(events, ev)
 			if ev.Status == "success" {
 				delete(remaining, code)

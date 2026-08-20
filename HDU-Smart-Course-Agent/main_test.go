@@ -2384,3 +2384,41 @@ func TestHandleClassScheduleByClassName(t *testing.T) {
 		}
 	}
 }
+
+func TestHandleExecutionStatusShowsInFlightEvents(t *testing.T) {
+	setupAgentHTTPWorkspace(t, fixturePayload([]map[string]any{
+		{"displayCode": "(2026-2027-1)-A0001001-01", "jxbmc": "(2026-2027-1)-A0001001-01", "kcmc": "高等数学A"},
+	}))
+	execStateMu.Lock()
+	execActive = true
+	execTicketID = "ticket-inflight"
+	execStartedAt = "2026-08-21T00:00:00+08:00"
+	execEvents = []agentexecutor.ExecutionEvent{
+		{CourseCode: "(2026-2027-1)-A0001001-01", Action: "select", Status: "running", Message: "选课中", StartedAt: "2026-08-21T00:00:01+08:00"},
+	}
+	execStateMu.Unlock()
+	t.Cleanup(func() {
+		execStateMu.Lock()
+		execActive = false
+		execTicketID = ""
+		execStartedAt = ""
+		execEvents = nil
+		execStateMu.Unlock()
+	})
+
+	rr := httptest.NewRecorder()
+	handleExecutionStatus(rr, httptest.NewRequest(http.MethodGet, "/api/execution/status", nil))
+	var resp ExecutionStatusResponse
+	if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode status: %v", err)
+	}
+	if !resp.Active || resp.TicketID != "ticket-inflight" {
+		t.Fatalf("unexpected status state: %+v", resp)
+	}
+	if len(resp.Log.Items) != 1 || resp.Log.Items[0].Action != "select" || resp.Log.Items[0].Status != "running" {
+		t.Fatalf("expected in-flight log item, got %+v", resp.Log)
+	}
+	if resp.Log.Summary.Pending != 1 {
+		t.Fatalf("expected 1 pending in-flight item, got %+v", resp.Log.Summary)
+	}
+}

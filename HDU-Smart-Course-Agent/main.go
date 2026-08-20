@@ -623,6 +623,7 @@ var (
 	execActive    bool
 	execTicketID  string
 	execStartedAt string
+	execEvents    []agentexecutor.ExecutionEvent
 )
 
 // executionRunner is the subset of the executor package the Smart Agent needs.
@@ -647,6 +648,7 @@ func execManagerStart(ticketID string, cancel context.CancelFunc) bool {
 	execActive = true
 	execTicketID = ticketID
 	execStartedAt = time.Now().Format(time.RFC3339)
+	execEvents = nil
 	return true
 }
 
@@ -660,6 +662,15 @@ func execManagerFinish() {
 	execActive = false
 	execTicketID = ""
 	execStartedAt = ""
+	execEvents = nil
+}
+
+// execManagerAppendEvent records a live-progress event so /status can show
+// per-course progress while a long wait/select run is still in flight.
+func execManagerAppendEvent(execEvent agentexecutor.ExecutionEvent) {
+	execStateMu.Lock()
+	defer execStateMu.Unlock()
+	execEvents = append(execEvents, execEvent)
 }
 
 func execManagerStop() (bool, string, string) {
@@ -1607,6 +1618,11 @@ func handleExecutionStart(w http.ResponseWriter, r *http.Request) {
 			_ = writeExecutionEventsLog(p, req.Authorization, nil, newErr)
 			return
 		}
+		if streamingRunner, ok := ex.(interface {
+			SetOnEvent(func(agentexecutor.ExecutionEvent))
+		}); ok {
+			streamingRunner.SetOnEvent(execManagerAppendEvent)
+		}
 		var runEvents []agentexecutor.ExecutionEvent
 		var runErr error
 		if req.WaitEnabled {
@@ -1630,9 +1646,12 @@ func handleExecutionStatus(w http.ResponseWriter, r *http.Request) {
 	active := execActive
 	ticketID := execTicketID
 	startedAt := execStartedAt
+	events := append([]agentexecutor.ExecutionEvent(nil), execEvents...)
 	execStateMu.Unlock()
 	resp := ExecutionStatusResponse{OK: true, Active: active, TicketID: ticketID, StartedAt: startedAt}
-	if data, err := os.ReadFile(p.executionLogPath); err == nil {
+	if active || len(events) > 0 {
+		resp.Log = executionLogFromEvents(p, ExecutionAuthorization{}, events, nil)
+	} else if data, err := os.ReadFile(p.executionLogPath); err == nil {
 		var runLog ExecutionLog
 		if json.Unmarshal(data, &runLog) == nil {
 			resp.Log = runLog
@@ -1707,7 +1726,7 @@ func killCourseConfigToUpstream(cfg KillCourseConfig) (*kcconfig.Config, error) 
 	return &kcCfg, nil
 }
 
-func writeExecutionEventsLog(p paths, auth ExecutionAuthorization, events []agentexecutor.ExecutionEvent, runErr error) error {
+func executionLogFromEvents(p paths, auth ExecutionAuthorization, events []agentexecutor.ExecutionEvent, runErr error) ExecutionLog {
 	now := time.Now().Format(time.RFC3339)
 	items := make([]ExecutionLogItem, 0, len(events)+1)
 	for _, ev := range events {
@@ -1741,7 +1760,7 @@ func writeExecutionEventsLog(p paths, auth ExecutionAuthorization, events []agen
 			RawLines:   []string{},
 		})
 	}
-	runLog := ExecutionLog{
+	return ExecutionLog{
 		SchemaVersion: schemaVersion,
 		Source:        "executor",
 		GeneratedAt:   now,
@@ -1751,6 +1770,10 @@ func writeExecutionEventsLog(p paths, auth ExecutionAuthorization, events []agen
 		Summary:       summarizeExecutionLog(items),
 		Items:         items,
 	}
+}
+
+func writeExecutionEventsLog(p paths, auth ExecutionAuthorization, events []agentexecutor.ExecutionEvent, runErr error) error {
+	runLog := executionLogFromEvents(p, auth, events, runErr)
 	return writeJSONFile(p.executionLogPath, runLog)
 }
 
