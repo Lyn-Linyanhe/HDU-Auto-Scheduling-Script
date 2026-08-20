@@ -248,6 +248,7 @@
     if (!matched.length) {
       state.personalScheduleAutoImported = true;
       state.baseScheduleName = '个人课表未匹配';
+      state.importUnmatched = list.length;
       persistState();
       renderBaseSummary();
       return;
@@ -255,6 +256,7 @@
     state.baseCourseIds = [...new Set(matched.map((item) => item.id))];
     state.baseScheduleName = '个人课表';
     state.personalScheduleAutoImported = true;
+    state.importUnmatched = Math.max(0, list.length - matched.length);
     addManySections(matched, 'base');
   }
 
@@ -1022,6 +1024,9 @@
     const baseItems = state.baseCourseIds.map((id) => courses.find((course) => course.id === id)).filter(Boolean);
     const credits = baseItems.reduce((sum, item) => sum + item.credits, 0);
     els.baseSummary.textContent = `${state.baseScheduleName || '现有课表'}：${baseItems.length} 门，${formatCredit(credits)} 学分。`;
+    if (state.importUnmatched) {
+      els.baseSummary.textContent += `（${state.importUnmatched} 个条目未匹配到课程，未导入）`;
+    }
   }
 
   function renderConstraintQuickPicks() {
@@ -1188,10 +1193,20 @@
       els.tableResultCount.textContent = '0 个方案';
       if (els.candidatePage) els.candidatePage.value = '';
       if (els.tableCandidatePage) els.tableCandidatePage.value = '';
-      const emptyMessage = (state.dismissedCandidates || []).length
-        ? '\u5df2\u5220\u9664\u672c\u8f6e\u5019\u9009\u65b9\u6848\uff0c\u53ef\u91cd\u65b0\u751f\u6210\u4ee5\u83b7\u53d6\u65b0\u7ed3\u679c\u3002'
-        : '\u70b9\u51fb\u201c\u751f\u6210\u5019\u9009\u8bfe\u8868\u201d\u5f00\u59cb\u679a\u4e3e\u3002';
+      const dismissedCount = (state.dismissedCandidates || []).length;
+      const emptyMessage = dismissedCount
+        ? `本轮 ${dismissedCount} 个候选方案已删除，可点击下方“恢复已删除候选”找回，或直接重新生成以获取新候选。`
+        : '点击“生成候选课表”开始枚举。';
       els.resultList.innerHTML = `<div class="empty-state">${emptyMessage}</div>`;
+      if (dismissedCount) {
+        const restoreButton = document.createElement('button');
+        restoreButton.className = 'ghost-btn small';
+        restoreButton.type = 'button';
+        restoreButton.id = 'restore-dismissed';
+        restoreButton.textContent = '恢复已删除候选';
+        restoreButton.addEventListener('click', () => restoreDismissedCandidates());
+        els.resultList.appendChild(restoreButton);
+      }
       els.candidateTitle.textContent = '当前显示：已选课程预览';
       els.candidatePreview.disabled = true;
       els.candidateReturn.disabled = !state.candidatePreviewEnabled;
@@ -1314,6 +1329,8 @@
           return;
         }
       }
+      // A fresh generation starts a new round: release any previously dismissed candidates.
+      state.dismissedCandidates = [];
       els.estimateText.textContent = '正在生成候选课表...';
       const generated = await runSchedulerWorker('generate', groups, schedulerState(), 500);
       solutions = generated.results;
@@ -1441,6 +1458,31 @@
     els.resultList.querySelectorAll('[data-favorite-remove]').forEach((button) => {
       button.addEventListener('click', () => removeFavoriteCandidate(button.dataset.favoriteRemove));
     });
+  }
+
+  async function restoreDismissedCandidates() {
+    if (!(state.dismissedCandidates || []).length) return;
+    state.dismissedCandidates = [];
+    const groups = candidateGroups();
+    setSchedulingBusy(true);
+    els.estimateText.textContent = '正在恢复已删除候选...';
+    try {
+      const generated = await runSchedulerWorker('generate', groups, schedulerState(), 500);
+      solutions = generated.results;
+      state.candidateCursor = 0;
+      activeSolution = solutions[0] || null;
+      state.activeCandidate = activeSolution ? activeSolution.signature : '';
+      state.candidatePreviewEnabled = Boolean(activeSolution);
+      els.estimateText.textContent = generated.capped
+        ? `已恢复 ${solutions.length} 个候选（可能更多）。`
+        : `已恢复 ${solutions.length} 个候选方案。`;
+      persistState();
+      renderAll();
+    } catch (error) {
+      els.estimateText.textContent = `恢复失败：${error.message || error}`;
+    } finally {
+      setSchedulingBusy(false);
+    }
   }
 
   function dismissCandidate() {
@@ -1636,6 +1678,7 @@
     const raw = JSON.parse(text);
     const list = Array.isArray(raw?.items) ? raw.items : Array.isArray(raw) ? raw : [];
     const matched = list.map(matchImportedCourse).filter(Boolean);
+    state.importUnmatched = Math.max(0, list.length - matched.length);
     state.baseCourseIds = [...new Set(matched.map((item) => item.id))];
     state.baseScheduleName = file.name.replace(/\.json$/i, '');
     addManySections(matched, 'base');
@@ -1662,6 +1705,7 @@
     state.baseCourseIds = [];
     state.baseScheduleName = '';
     state.personalScheduleAutoImported = false;
+    state.importUnmatched = 0;
     clearCandidateState();
     persistState();
     rebuildSelection();
@@ -1744,6 +1788,7 @@
       state.baseCourseIds = [];
       state.baseScheduleName = '';
       state.personalScheduleAutoImported = false;
+      state.importUnmatched = 0;
       clearCandidateState();
       persistState();
       rebuildSelection();
