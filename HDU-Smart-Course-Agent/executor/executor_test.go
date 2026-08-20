@@ -269,3 +269,47 @@ func TestStartWaitReloginOnPartDisplayExpired(t *testing.T) {
 		t.Fatalf("expected at least 2 logins (initial + re-login), got %d", got)
 	}
 }
+
+func TestWaitIntervalBacksOffAndCaps(t *testing.T) {
+	cases := []struct {
+		base, streak, want int
+	}{
+		{0, 0, 60},
+		{1, 0, 1},
+		{1, 1, 2},
+		{10, 3, 80},
+		{10, 7, 600},    // capped at waitMaxSeconds
+		{60, 10, 600},   // capped
+		{600, 1, 600},   // base at cap stays at cap
+		{1200, 1, 2400}, // base above cap keeps growing (user override)
+	}
+	for _, c := range cases {
+		got := waitInterval(c.base, c.streak)
+		if got != c.want {
+			t.Fatalf("waitInterval(%d, %d) = %d, want %d", c.base, c.streak, got, c.want)
+		}
+	}
+}
+
+func TestStartWaitTransientFailureKeepsWaiting(t *testing.T) {
+	var loginCount int32
+	server := newReloginMockServer(t, []string{`{"flag":"1","msg":"选课成功"}`}, &loginCount, []string{"无功能权限"})
+	defer server.Close()
+	ex := setupExecutor(t, server, "")
+	events, err := ex.StartWait(context.Background(), map[string]string{"(2026-2027-1)-A0001001-01": "1"}, 1, make(chan struct{}))
+	if err != nil {
+		t.Fatalf("StartWait error: %v", err)
+	}
+	if got := atomic.LoadInt32(&loginCount); got != 1 {
+		t.Fatalf("expected no re-login for a transient data error, got %d logins", got)
+	}
+	successSeen := false
+	for _, ev := range events {
+		if ev.Status == "success" && ev.CourseCode == "(2026-2027-1)-A0001001-01" {
+			successSeen = true
+		}
+	}
+	if !successSeen {
+		t.Fatalf("course should still be selected after a transient failure, events=%+v", events)
+	}
+}

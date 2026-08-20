@@ -164,6 +164,8 @@ func (e *Executor) StartWait(ctx context.Context, plan map[string]string, interv
 	}
 
 	var events []ExecutionEvent
+	erroredOnce := make(map[string]bool, len(remaining))
+	streak := 0
 	first := true
 	for len(remaining) > 0 {
 		if !first {
@@ -172,31 +174,35 @@ func (e *Executor) StartWait(ctx context.Context, plan map[string]string, interv
 				return appendSkipped(events, remaining), ctx.Err()
 			case <-done:
 				return appendSkipped(events, remaining), nil
-			case <-time.After(time.Duration(intervalSec) * time.Second):
+			case <-time.After(time.Duration(waitInterval(intervalSec, streak)) * time.Second):
 			}
 		}
 		first = false
 
+		failedChecks := 0
 		for code := range remaining {
 			ok, err := kcourse.GetIsCourseOk(e.client, e.cfg, e.course, code)
 			if err != nil {
 				if isLoginExpiredError(err) {
 					if reloginErr := e.relogin(); reloginErr == nil {
 						// Session was stale; try again on the next poll instead
-						// of failing the course.
+						// of failing the course. A stale session is not a
+						// transient data error, so do not grow the backoff.
 						continue
 					}
 				}
-				ev := ExecutionEvent{
-					CourseCode: code,
-					Action:     "wait",
-					Status:     "failed",
-					Message:    "查询余量失败: " + err.Error(),
-					StartedAt:  time.Now().Format(time.RFC3339),
-					FinishedAt: time.Now().Format(time.RFC3339),
+				failedChecks++
+				if !erroredOnce[code] {
+					erroredOnce[code] = true
+					events = append(events, ExecutionEvent{
+						CourseCode: code,
+						Action:     "wait",
+						Status:     "failed",
+						Message:    "查询余量失败: " + err.Error() + "；已保留该课程继续蹲课，轮询将按指数退避。",
+						StartedAt:  time.Now().Format(time.RFC3339),
+						FinishedAt: time.Now().Format(time.RFC3339),
+					})
 				}
-				events = append(events, ev)
-				delete(remaining, code)
 				continue
 			}
 			if !ok {
@@ -212,17 +218,45 @@ func (e *Executor) StartWait(ctx context.Context, plan map[string]string, interv
 			}
 			if err := e.execCourseAction(code, "1"); err != nil {
 				ev.Status = "failed"
-				ev.Message = "选课失败: " + err.Error()
+				ev.Message = "选课失败: " + err.Error() + "；将保留该课程继续蹲课。"
 			} else {
 				ev.Status = "success"
 				ev.Message = "蹲课选课成功"
 			}
 			ev.FinishedAt = time.Now().Format(time.RFC3339)
 			events = append(events, ev)
-			delete(remaining, code)
+			if ev.Status == "success" {
+				delete(remaining, code)
+				erroredOnce[code] = false
+			}
+		}
+		if failedChecks == 0 {
+			streak = 0
+		} else {
+			streak++
 		}
 	}
 	return events, nil
+}
+
+// waitMaxSeconds caps the adaptive backoff in wait mode so a persistently
+// failing course cannot push the poll interval to an absurd value.
+const waitMaxSeconds = 600
+
+// waitInterval doubles `base` once per consecutive failed round (up to
+// waitMaxSeconds) so transient teaching-system errors do not hammer the API.
+func waitInterval(base, streak int) int {
+	if base <= 0 {
+		base = 60
+	}
+	next := base << streak
+	if next < base {
+		next = base
+	}
+	if base <= waitMaxSeconds && next > waitMaxSeconds {
+		next = waitMaxSeconds
+	}
+	return next
 }
 
 // execCourseAction runs one select/drop action. If the teaching system reports
