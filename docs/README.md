@@ -16,3 +16,5 @@
 `superpowers/specs/` contains dated design records. `superpowers/plans/` contains dated implementation plans. Paths and status statements in those files describe the repository at the time they were written and are not current user documentation.
 
 - [2026-08-21 教务实时数据与 KillCourse 自动化集成方案](superpowers/plans/2026-08-21-live-data-and-killcourse-integration.md): 教务稳定性问题界定、行政班课表/实时人数方案、HDU-KillCourse 集成方案。
+- [2026-08-21 KillCourse 执行器实施计划](superpowers/plans/2026-08-21-killcourse-executor-implementation.md): vendor、executor、API、前端一键执行与 testlab 验收的逐步计划。
+- [2026-08-21 实时人数与行政班课表实施计划](superpowers/plans/2026-08-21-live-capacity-class-schedule.md): P2 实时人数（抓包先行）与 P3 行政班课表（离线聚合）的实施安排。
