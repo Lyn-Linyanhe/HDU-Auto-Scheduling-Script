@@ -216,6 +216,11 @@ func (m *mockServer) handleCourse(w http.ResponseWriter, r *http.Request) {
 		_, _ = io.WriteString(w, "{this is not json")
 	case "empty-course":
 		writeJSON(w, map[string]any{"items": []any{}})
+	case "course-shape-drift":
+		writeJSON(w, map[string]any{"items": []map[string]any{
+			{"jxmc": "(2026-2027-1)-A0001001-01", "kcmc": "高等数学A", "sksj": "星期一第1-2节{1-17周}"},
+			{"jxmc": "(2026-2027-1)-A0001001-02", "kcmc": "高等数学A", "sksj": "星期二第3-4节{1-17周}"},
+		}})
 	case "timeout":
 		time.Sleep(2 * time.Second)
 		writeJSON(w, map[string]any{"items": m.course.Items})
@@ -349,7 +354,7 @@ func newPublicKey() (string, error) {
 
 func knownScenario(value string) bool {
 	switch value {
-	case "success", "bad-password", "forbidden", "malformed-course", "empty-course", "timeout", "personal-failure", "killcourse", "killcourse-fail":
+	case "success", "bad-password", "forbidden", "malformed-course", "empty-course", "course-shape-drift", "timeout", "personal-failure", "killcourse", "killcourse-fail":
 		return true
 	default:
 		return false

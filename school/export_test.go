@@ -28,6 +28,28 @@ func TestRefreshPersonalScheduleRequiresSession(t *testing.T) {
 	}
 }
 
+func TestCourseShapeDriftDetectsRenamedFields(t *testing.T) {
+	intact := []map[string]any{
+		{"jxbmc": "(2026-2027-1)-A0001001-01", "kcmc": "高等数学A", "xf": "5.00"},
+		{"jxbmc": "(2026-2027-1)-A0002001-01", "kcmc": "大学英语"},
+	}
+	if message, drifted := courseShapeDrift(intact); drifted {
+		t.Fatalf("intact shape should not drift, got %q", message)
+	}
+	driftedBody := []map[string]any{
+		{"jxmc": "(2026-2027-1)-A0001001-01", "kcmc": "高等数学A"},
+		{"jxmc": "(2026-2027-1)-A0001001-02", "kcmc": "高等数学A"},
+	}
+	if message, ok := courseShapeDrift(driftedBody); !ok {
+		t.Fatalf("renamed jxbmc should be reported as drift")
+	} else if !strings.Contains(message, "jxbmc") || !strings.Contains(message, "2/2") {
+		t.Fatalf("unexpected drift message: %q", message)
+	}
+	if _, ok := courseShapeDrift(nil); ok {
+		t.Fatalf("empty items must not be reported as drift")
+	}
+}
+
 func TestValidateExportRequestAllowsExplicitBrowserSession(t *testing.T) {
 	if err := ValidateExportRequest(ExportRequest{Method: "browser", XueNian: "2026", XueQi: "1"}); err != nil {
 		t.Fatalf("browser session request rejected: %v", err)
@@ -158,6 +180,7 @@ func TestWriteCourseDiagnosis(t *testing.T) {
 		termParams{XueNian: "2026", XueQi: "1", Xqm: "3"},
 		200,
 		[]byte(`{"items":[],"data":{"rows":[]}}`),
+		"",
 	)
 	if path == "" {
 		t.Fatal("writeCourseDiagnosis returned empty path")
@@ -167,6 +190,9 @@ func TestWriteCourseDiagnosis(t *testing.T) {
 		t.Fatalf("read diagnosis: %v", err)
 	}
 	text := string(data)
+	if strings.Contains(text, `"shapeDrift"`) {
+		t.Fatalf("empty shapeDrift should be omitted: %s", text)
+	}
 	for _, want := range []string{`"term": "2026-2027-1"`, `"items"`, `"$.data.rows": 0`} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("diagnosis missing %q:\n%s", want, text)

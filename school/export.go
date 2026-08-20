@@ -71,6 +71,7 @@ type courseResponseDiagnosis struct {
 	BodyBytes   int            `json:"bodyBytes"`
 	TopKeys     []string       `json:"topKeys,omitempty"`
 	ArrayCounts map[string]int `json:"arrayCounts,omitempty"`
+	ShapeDrift  string         `json:"shapeDrift,omitempty"`
 	Preview     string         `json:"preview,omitempty"`
 	SavedAt     string         `json:"savedAt"`
 }
@@ -626,7 +627,7 @@ func (e *exporter) exportCourse(req ExportRequest) (*ExportResult, error) {
 		return nil, err
 	}
 	if statusErr := responseStatusError("course", resp.StatusCode); statusErr != nil {
-		path := writeCourseDiagnosis(params, resp.StatusCode, body)
+		path := writeCourseDiagnosis(params, resp.StatusCode, body, "")
 		if path != "" {
 			return nil, fmt.Errorf("%w；诊断文件：%s", statusErr, path)
 		}
@@ -643,14 +644,14 @@ func (e *exporter) exportCourse(req ExportRequest) (*ExportResult, error) {
 
 	items, err := extractCourseItems(body)
 	if err != nil {
-		path := writeCourseDiagnosis(params, resp.StatusCode, body)
+		path := writeCourseDiagnosis(params, resp.StatusCode, body, "")
 		if path != "" {
 			return nil, fmt.Errorf("课程接口返回内容不是可解析的 JSON，可能仍停留在登录页；诊断文件：%s", path)
 		}
 		return nil, errors.New("课程接口返回内容不是可解析的 JSON，可能仍停留在登录页")
 	}
 	if len(items) == 0 {
-		path := writeCourseDiagnosis(params, resp.StatusCode, body)
+		path := writeCourseDiagnosis(params, resp.StatusCode, body, "")
 		suffix := ""
 		if path != "" {
 			suffix = "；诊断文件：" + path
@@ -663,6 +664,14 @@ func (e *exporter) exportCourse(req ExportRequest) (*ExportResult, error) {
 			params.Xqm,
 			suffix,
 		)
+	}
+	if drift, drifted := courseShapeDrift(items); drifted {
+		path := writeCourseDiagnosis(params, resp.StatusCode, body, drift)
+		suffix := ""
+		if path != "" {
+			suffix = "；诊断文件：" + path
+		}
+		return nil, fmt.Errorf("课程接口返回内容疑似改版（关键字段缺失）：%s%s", drift, suffix)
 	}
 
 	raw := map[string]any{
@@ -761,7 +770,7 @@ func findCourseItems(value any) []map[string]any {
 	return nil
 }
 
-func writeCourseDiagnosis(params termParams, statusCode int, body []byte) string {
+func writeCourseDiagnosis(params termParams, statusCode int, body []byte, shapeDrift string) string {
 	diagnosis := courseResponseDiagnosis{
 		Term:        params.XueNian + "-" + strconv.Itoa(mustAtoi(params.XueNian)+1) + "-" + params.XueQi,
 		XueNian:     params.XueNian,
@@ -770,6 +779,7 @@ func writeCourseDiagnosis(params termParams, statusCode int, body []byte) string
 		StatusCode:  statusCode,
 		BodyBytes:   len(body),
 		ArrayCounts: map[string]int{},
+		ShapeDrift:  strings.TrimSpace(shapeDrift),
 		Preview:     safePreview(body, 1000),
 		SavedAt:     time.Now().Format(time.RFC3339),
 	}
@@ -790,6 +800,40 @@ func writeCourseDiagnosis(params termParams, statusCode int, body []byte) string
 		return ""
 	}
 	return path
+}
+
+// courseShapeRequiredFields are the fields every task-course row is expected to
+// carry. When a large share of extracted rows lack them, the school likely
+// changed the response shape and we should fail loudly instead of exporting
+// silently broken data.
+var courseShapeRequiredFields = []string{"jxbmc", "kcmc"}
+
+// courseShapeDrift reports a human-readable message when fewer than 90% of the
+// extracted rows carry all required fields. It returns (message, false) when the
+// shape looks intact or there are no rows to judge.
+func courseShapeDrift(items []map[string]any) (string, bool) {
+	if len(items) == 0 {
+		return "", false
+	}
+	complete := 0
+	for _, item := range items {
+		ok := true
+		for _, field := range courseShapeRequiredFields {
+			value, exists := item[field]
+			if !exists || strings.TrimSpace(fmt.Sprint(value)) == "" {
+				ok = false
+				break
+			}
+		}
+		if ok {
+			complete++
+		}
+	}
+	if float64(complete)/float64(len(items)) >= 0.9 {
+		return "", false
+	}
+	return fmt.Sprintf("%d/%d 条教学班记录缺少关键字段 %s",
+		len(items)-complete, len(items), strings.Join(courseShapeRequiredFields, "/")), true
 }
 
 func topLevelKeys(value any) []string {

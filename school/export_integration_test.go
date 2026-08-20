@@ -82,6 +82,26 @@ func TestRunExportWithTestEndpointsReportsCourseForbidden(t *testing.T) {
 	}
 }
 
+func TestRunExportWithTestEndpointsRejectsCourseShapeDrift(t *testing.T) {
+	_, status, outputDir, err := runMockExporter(t, exporterTestScenario{
+		courseBody:   `{"items":[{"jxmc":"(2026-2027-1)-A0001001-01","kcmc":"高等数学A"},{"jxmc":"(2026-2027-1)-A0001001-02","kcmc":"高等数学A"}]}`,
+		personalBody: `{"kbList":[]}`,
+	})
+	if err == nil || !strings.Contains(err.Error(), "疑似改版") || status.Step != "query" {
+		t.Fatalf("shape drift error=%v status=%#v", err, status)
+	}
+	data, readErr := os.ReadFile(outputDir + string(os.PathSeparator) + "course-export-diagnosis.json")
+	if readErr != nil {
+		t.Fatalf("diagnosis file was not written for shape drift: %v", readErr)
+	}
+	if !strings.Contains(string(data), `"shapeDrift"`) {
+		t.Fatalf("diagnosis is missing shapeDrift: %s", data)
+	}
+	if _, statErr := os.Stat(outputDir + string(os.PathSeparator) + "course.json"); statErr == nil {
+		t.Fatalf("course.json must not be written when the response shape drifted")
+	}
+}
+
 func TestFinishCASLoginRejectsReturnedLoginPage(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Query().Get("service") == "" {

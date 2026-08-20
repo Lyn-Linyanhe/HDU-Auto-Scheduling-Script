@@ -249,7 +249,7 @@ func (e *exporter) exportCourseFromBrowser(_ ExportRequest, params termParams) (
 				return cached, nil
 			}
 		}
-		path := writeCourseDiagnosis(params, statusCode, []byte(text))
+		path := writeCourseDiagnosis(params, statusCode, []byte(text), "")
 		if path != "" {
 			return nil, fmt.Errorf("%w；诊断文件：%s", statusErr, path)
 		}
@@ -266,7 +266,7 @@ func (e *exporter) exportCourseFromBrowser(_ ExportRequest, params termParams) (
 		if cached, cacheErr := loadCachedCourseForTerm(params); cacheErr == nil {
 			return cached, nil
 		}
-		path := writeCourseDiagnosis(params, statusCode, []byte(text))
+		path := writeCourseDiagnosis(params, statusCode, []byte(text), "")
 		if path != "" {
 			return nil, fmt.Errorf("课程接口返回内容不是可解析的 JSON；诊断文件：%s", path)
 		}
@@ -294,7 +294,7 @@ func (e *exporter) exportCourseFromBrowser(_ ExportRequest, params termParams) (
 		if cached, cacheErr := loadCachedCourseForTerm(params); cacheErr == nil {
 			return cached, nil
 		}
-		path := writeCourseDiagnosis(params, statusCode, []byte(text))
+		path := writeCourseDiagnosis(params, statusCode, []byte(text), "")
 		suffix := ""
 		if path != "" {
 			suffix = "；诊断文件：" + path

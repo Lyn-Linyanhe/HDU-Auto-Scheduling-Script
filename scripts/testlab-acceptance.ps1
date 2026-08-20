@@ -161,6 +161,7 @@ try {
   Invoke-Scenario -Name "forbidden" -ExpectedSuccess $false | Out-Null
   Invoke-Scenario -Name "malformed-course" -ExpectedSuccess $false -ExpectedDiagnosis $true | Out-Null
   Invoke-Scenario -Name "empty-course" -ExpectedSuccess $false -ExpectedDiagnosis $true | Out-Null
+  Invoke-Scenario -Name "course-shape-drift" -ExpectedSuccess $false -ExpectedDiagnosis $true | Out-Null
   Invoke-Scenario -Name "timeout" -ExpectedSuccess $false | Out-Null
   Invoke-Scenario -Name "personal-failure" -ExpectedSuccess $true -ExpectedPersonal $false | Out-Null
   Invoke-KillCourseMockScenario -Name "killcourse" -ExpectSelectFlag "1"

@@ -221,5 +221,10 @@
    修复了此前失败后按 `max(1s)` 立即重试的潜在打爆隐患。验收：
    `scripts/smart-agent-backoff-check.js`（8 组数值）已接入 `testlab-acceptance.ps1`；
    UI smoke（桌面/390px）通过。
-5. **待办（仍属 P4）**：接口响应 shape 变更诊断的自动化回归。不依赖真实会话，
-   可离线继续实现。
+5. **接口响应 shape 变更诊断的自动化回归（已实现）**：`school/export.go` 在提取到
+   课程条目后校验关键字段（`jxbmc/kcmc`），当提取的条目里 ≥10% 缺关键字段时判定
+   接口疑似改版：返回明确错误（“课程接口返回内容疑似改版”）、写入诊断文件并带
+   `shapeDrift` 字段、且绝不落盘损坏的 `course.json`。回归覆盖：单测
+   `TestCourseShapeDriftDetectsRenamedFields`、集成
+   `TestRunExportWithTestEndpointsRejectsCourseShapeDrift`、端到端 testlab 场景
+   `course-shape-drift`（已接入 `testlab-acceptance.ps1`）。
