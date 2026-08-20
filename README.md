@@ -1,5 +1,7 @@
 # HDU 课表自动化编排助手
 
+[![CI](https://github.com/Lyn-Linyanhe/HDU-Auto-Scheduling-Script/actions/workflows/ci.yml/badge.svg)](https://github.com/Lyn-Linyanhe/HDU-Auto-Scheduling-Script/actions/workflows/ci.yml)
+
 面向杭州电子科技大学选课场景的本地排课工具。普通用户只需要运行一个 exe，即可完成课程数据导出、个人课表导入、离线模拟排课、候选方案生成和课表导出。
 
 当前版本的用户入口：
@@ -7,6 +9,12 @@
 ```text
 HDU-Auto-Scheduling-Script.exe
 ```
+
+## 最新发布
+
+- **v0.5.4**（2026-08-21）：排课页“删除候选后可恢复 / 重新生成视为新一轮”、导入 JSON 底板时提示未匹配条目、CI 无头浏览器启动加固、Smart Agent 计划接口凭据脱敏。
+- 下载与发布说明：[GitHub Releases](https://github.com/Lyn-Linyanhe/HDU-Auto-Scheduling-Script/releases)
+- Release 资产：`HDU-Auto-Scheduling-Script.exe`（主站）+ `smart-agent/HDU-Smart-Course-Agent.exe`（智能选课执行助手）+ 完整 ZIP。
 
 ## 快速开始
 
@@ -60,10 +68,10 @@ release 版默认把 `course.json`、`personal-schedule.json`、目标课表和�
 - 缺少 `course.json` 时，可通过导出页联网导出课程数据。
 - 支持从任务落实 Excel 自动转换生成 `course.json`。
 - 支持自动读取 `personal-schedule.json`，作为现有个人课表底板。
-- 支持手动导入个人/班级 JSON 课表。
+- 支持手动导入个人/班级 JSON 课表，未匹配条目会明确提示数量。
 - 支持课程搜索、加入、移除、锁定、冲突提示和单双周展示。
 - 支持课程级、时间级、方案级约束。
-- 支持候选课表估算、生成、翻页预览、收藏、删除和导入显示。
+- 支持候选课表估算、生成、翻页预览、收藏、删除、恢复和导入显示；删除全部候选后可一键恢复，重新生成会返回新一轮全部候选。
 - 候选生成默认在 Web Worker 中执行，减少页面卡顿。
 - 候选为 0 时会显示原因诊断。
 - 候选方案会显示学分、退课数、早八、晚课、全天无课和约束命中解释。

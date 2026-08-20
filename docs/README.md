@@ -14,3 +14,5 @@
 ## Engineering History
 
 `superpowers/specs/` contains dated design records. `superpowers/plans/` contains dated implementation plans. Paths and status statements in those files describe the repository at the time they were written and are not current user documentation.
+
+- [2026-08-21 教务实时数据与 KillCourse 自动化集成方案](superpowers/plans/2026-08-21-live-data-and-killcourse-integration.md): 教务稳定性问题界定、行政班课表/实时人数方案、HDU-KillCourse 集成方案。
