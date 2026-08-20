@@ -12,6 +12,7 @@ HDU-Auto-Scheduling-Script.exe
 
 ## 最新发布
 
+- **v0.5.5**（2026-08-21）：Smart Agent 内置一键执行：授权票据通过后可直接在应用内选课/退课/蹲课（vendor 的 HDU-KillCourse v1.4.9，含 start/status/stop API、1.5s 状态轮询、执行的日志写入与成功后的个人课表自动刷新）。
 - **v0.5.4**（2026-08-21）：排课页“删除候选后可恢复 / 重新生成视为新一轮”、导入 JSON 底板时提示未匹配条目、CI 无头浏览器启动加固、Smart Agent 计划接口凭据脱敏。
 - 下载与发布说明：[GitHub Releases](https://github.com/Lyn-Linyanhe/HDU-Auto-Scheduling-Script/releases)
 - Release 资产：`HDU-Auto-Scheduling-Script.exe`（主站）+ `smart-agent/HDU-Smart-Course-Agent.exe`（智能选课执行助手）+ 完整 ZIP。
@@ -36,7 +37,7 @@ HDU-Auto-Scheduling-Script.exe
 | 根目录、`main.go` | 主排课助手的 Go 入口和统一 HTTP 服务 |
 | `web/` | 主排课助手的内嵌 HTML、CSS、JavaScript 和 Worker |
 | `school/` | 教务登录、全校课程和个人课表导出 |
-| `HDU-Smart-Course-Agent/` | 独立 Go module，负责把目标课表转换为 KillCourse 执行准备 |
+| `HDU-Smart-Course-Agent/` | 独立 Go module，负责把目标课表转换为 KillCourse 执行准备，并支持授权后的内置一键执行（vendor `third_party/HDU-KillCourse`） |
 | `cmd/` | 兼容导出器和仅供验收使用的本地 testlab 命令 |
 | `scripts/` | 构建、发布包、自检和 UI/API 验收脚本 |
 | `docs/` | 用户文档、仓库规范和带日期的工程记录 |
